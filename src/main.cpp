@@ -112,6 +112,10 @@ class $modify(BotLayer, GJBaseGameLayer) {
 		bool injecting = false;
 		float lastPx = 0.f;
 
+		// автокликер
+		float acTimer = 0.f;
+		bool acHold = false;
+
 		std::mt19937 rng{std::random_device{}()};
 	};
 
@@ -574,12 +578,44 @@ class $modify(BotLayer, GJBaseGameLayer) {
 		f->lastPx = px;
 	}
 
+	void autoClick(float dt) {
+		auto f = m_fields.self();
+		auto mod = Mod::get();
+		if (!mod->getSettingValue<bool>("autoclick")) {
+			if (f->acHold) {
+				this->inject(false, 1, true);
+				f->acHold = false;
+			}
+			f->acTimer = 0.f;
+			return;
+		}
+		int cps = static_cast<int>(std::clamp<int64_t>(mod->getSettingValue<int64_t>("cps"), 1, 30));
+		float half = 0.5f / static_cast<float>(cps);
+		f->acTimer += dt;
+		if (f->acTimer >= half) {
+			f->acTimer -= half;
+			if (f->acTimer > half) f->acTimer = 0.f;
+			f->acHold = !f->acHold;
+			this->inject(f->acHold, 1, true);
+		}
+	}
+
 	void processCommands(float dt, bool isHalfTick, bool isLastTick) {
+		bool inLevel = static_cast<GJBaseGameLayer*>(PlayLayer::get()) == this;
+
+		// джамп-хак: куб всегда "на земле"
+		if (inLevel && m_player1 && !m_player1->m_isDead && Mod::get()->getSettingValue<bool>("jumphack")) {
+			bool cubeLike = !(m_player1->m_isShip || m_player1->m_isBird || m_player1->m_isBall ||
+				m_player1->m_isRobot || m_player1->m_isSpider || m_player1->m_isSwing || m_player1->m_isDart);
+			if (cubeLike) m_player1->m_isOnGround = true;
+		}
+
 		GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
 
-		if (static_cast<GJBaseGameLayer*>(PlayLayer::get()) != this) return;
-		if (!Mod::get()->getSettingValue<bool>("enabled")) return;
+		if (!inLevel) return;
 		if (!m_player1) return;
+		if (!m_player1->m_isDead) this->autoClick(dt);
+		if (!Mod::get()->getSettingValue<bool>("enabled")) return;
 
 		auto f = m_fields.self();
 		if (m_player1->m_isDead) {
@@ -632,27 +668,108 @@ static bool cheatsOn() {
 	auto m = Mod::get();
 	return m->getSettingValue<bool>("noclip") ||
 		m->getSettingValue<bool>("enabled") ||
+		m->getSettingValue<bool>("jumphack") ||
+		m->getSettingValue<bool>("autoclick") ||
 		std::abs(m->getSettingValue<double>("speed") - 1.0) > 0.001;
 }
 
 class $modify(BotPlayLayer, PlayLayer) {
 	struct Fields {
 		bool cheated = false; // были ли включены читы в этой попытке
+		int frames = 0;
+		int hitFrames = 0;
+		int lastHitFrame = -1;
+		bool wasHidden = false;
+		bool wasHiddenWave = false;
+		CCLabelBMFont* label = nullptr;
+		std::string lastText;
 	};
+
+	void setupHasCompleted() {
+		PlayLayer::setupHasCompleted();
+		auto label = CCLabelBMFont::create("", "chatFont.fnt");
+		label->setAnchorPoint({0.f, 1.f});
+		label->setScale(0.6f);
+		label->setOpacity(190);
+		auto win = CCDirector::get()->getWinSize();
+		label->setPosition({8.f, win.height - 6.f});
+		label->setZOrder(100);
+		m_uiLayer->addChild(label);
+		m_fields->label = label;
+	}
 
 	void update(float dt) {
 		PlayLayer::update(dt);
+		auto mod = Mod::get();
+		++m_fields->frames;
 		if (cheatsOn()) m_fields->cheated = true;
+
+		if (m_player1) {
+			// спрятать игрока
+			if (mod->getSettingValue<bool>("hide-player")) {
+				m_player1->setVisible(false);
+				m_fields->wasHidden = true;
+			} else if (m_fields->wasHidden) {
+				m_player1->setVisible(true);
+				m_fields->wasHidden = false;
+			}
+
+			// след волны
+			if (m_player1->m_waveTrail) {
+				if (mod->getSettingValue<bool>("hide-wave")) {
+					m_player1->m_waveTrail->setVisible(false);
+					m_fields->wasHiddenWave = true;
+				} else if (m_fields->wasHiddenWave) {
+					m_player1->m_waveTrail->setVisible(true);
+					m_fields->wasHiddenWave = false;
+				}
+				if (mod->getSettingValue<bool>("solid-wave")) m_player1->m_waveTrail->m_isSolid = true;
+			}
+		}
+
+		// индикатор читов
+		if (m_fields->label) {
+			std::string text;
+			if (mod->getSettingValue<bool>("indicator")) {
+				if (mod->getSettingValue<bool>("noclip")) {
+					float acc = 100.f;
+					if (m_fields->frames > 0) {
+						acc = 100.f * (1.f - static_cast<float>(m_fields->hitFrames) / static_cast<float>(m_fields->frames));
+					}
+					text += fmt::format("Noclip {:.1f}%  ", acc);
+				}
+				if (mod->getSettingValue<bool>("jumphack")) text += "Jump hack  ";
+				if (mod->getSettingValue<bool>("autoclick")) {
+					text += fmt::format("Autoclick {}cps  ", mod->getSettingValue<int64_t>("cps"));
+				}
+				double sp = mod->getSettingValue<double>("speed");
+				if (std::abs(sp - 1.0) > 0.001) text += fmt::format("Speed {:.1f}x  ", sp);
+				if (mod->getSettingValue<bool>("enabled")) text += fmt::format("Bot: {}  ", botMode());
+			}
+			if (text != m_fields->lastText) {
+				m_fields->lastText = text;
+				m_fields->label->setString(text.c_str());
+			}
+		}
 	}
 
 	void resetLevel() {
 		PlayLayer::resetLevel();
 		m_fields->cheated = false;
+		m_fields->frames = 0;
+		m_fields->hitFrames = 0;
+		m_fields->lastHitFrame = -1;
 	}
 
 	// ноуклип: не умираем, кроме анти-чит шипа
 	void destroyPlayer(PlayerObject* player, GameObject* object) {
-		if (Mod::get()->getSettingValue<bool>("noclip") && object != m_anticheatSpike) return;
+		if (Mod::get()->getSettingValue<bool>("noclip") && object != m_anticheatSpike) {
+			if (m_fields->lastHitFrame != m_fields->frames) {
+				m_fields->lastHitFrame = m_fields->frames;
+				++m_fields->hitFrames;
+			}
+			return;
+		}
 		PlayLayer::destroyPlayer(player, object);
 	}
 
