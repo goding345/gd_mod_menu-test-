@@ -664,6 +664,8 @@ class $modify(BotLayer, GJBaseGameLayer) {
 };
 
 
+CCNode* createFxLayer(); // visuals.cpp
+
 static bool cheatsOn() {
 	auto m = Mod::get();
 	return m->getSettingValue<bool>("noclip") ||
@@ -696,6 +698,8 @@ class $modify(BotPlayLayer, PlayLayer) {
 		label->setZOrder(100);
 		m_uiLayer->addChild(label);
 		m_fields->label = label;
+
+		if (auto fx = createFxLayer()) m_uiLayer->addChild(fx, 90);
 	}
 
 	void update(float dt) {
