@@ -6,9 +6,9 @@
 	},
 	"id": "user.autojump",
 	"name": "Mod Menu",
-	"version": "v2.0.0",
+	"version": "v2.1.0",
 	"developer": "user",
-	"description": "Menu on Tab: noclip, speedhack, auto bot, macro record/replay, safe mode.",
+	"description": "Menu on Tab: noclip, jump hack, autoclicker, speedhack, auto bot, macro, visual options, safe mode.",
 	"settings": {
 		"enabled": {
 			"type": "bool",
@@ -20,7 +20,11 @@
 			"name": "Bot mode",
 			"description": "Auto bot = plays cube/wave by itself. Record macro = record your run. Replay macro = plays the saved run.",
 			"default": "Auto bot",
-			"one-of": ["Auto bot", "Record macro", "Replay macro"]
+			"one-of": [
+				"Auto bot",
+				"Record macro",
+				"Replay macro"
+			]
 		},
 		"legit": {
 			"type": "int",
@@ -29,7 +33,9 @@
 			"default": 0,
 			"min": 0,
 			"max": 10,
-			"control": { "slider": true }
+			"control": {
+				"slider": true
+			}
 		},
 		"noclip": {
 			"type": "bool",
@@ -48,6 +54,43 @@
 			"name": "Safe mode",
 			"description": "Blocks level completion if cheats were on during the attempt.",
 			"default": true
+		},
+		"jumphack": {
+			"type": "bool",
+			"name": "Jump hack",
+			"default": false
+		},
+		"autoclick": {
+			"type": "bool",
+			"name": "Autoclicker",
+			"default": false
+		},
+		"cps": {
+			"type": "int",
+			"name": "Autoclicker CPS",
+			"default": 10,
+			"min": 1,
+			"max": 30
+		},
+		"indicator": {
+			"type": "bool",
+			"name": "Cheat indicator",
+			"default": true
+		},
+		"hide-player": {
+			"type": "bool",
+			"name": "Hide player",
+			"default": false
+		},
+		"hide-wave": {
+			"type": "bool",
+			"name": "Hide wave trail",
+			"default": false
+		},
+		"solid-wave": {
+			"type": "bool",
+			"name": "Solid wave trail",
+			"default": false
 		}
 	}
 }
