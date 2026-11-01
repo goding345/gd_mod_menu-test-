@@ -42,10 +42,28 @@ static std::vector<Page> const& pages() {
 			{0, "Safe mode", "safe-mode", 0, 0, 0},
 			{0, "Cheat indicator", "indicator", 0, 0, 0},
 		}},
-		{"Visual", {
+		{"Look", {
 			{0, "Hide player", "hide-player", 0, 0, 0},
 			{0, "Hide wave trail", "hide-wave", 0, 0, 0},
 			{0, "Solid wave trail", "solid-wave", 0, 0, 0},
+		}},
+		{"Weather", {
+			{1, "Snow", "fx-snow", 0, 10, 1},
+			{1, "Rain", "fx-rain", 0, 10, 1},
+			{1, "Fireflies", "fx-fireflies", 0, 10, 1},
+		}},
+		{"Screen", {
+			{2, "Stretch X", "fx-stretch-x", 0.3, 3.0, 0.1},
+			{2, "Stretch Y", "fx-stretch-y", 0.3, 3.0, 0.1},
+			{2, "Zoom", "fx-zoom", 0.3, 3.0, 0.1},
+			{1, "Tilt (deg)", "fx-tilt", -45, 45, 5},
+		}},
+		{"Fun", {
+			{1, "Rainbow tint", "fx-tint", 0, 10, 1},
+			{1, "Vignette", "fx-vignette", 0, 10, 1},
+			{1, "Wobble", "fx-wobble", 0, 10, 1},
+			{1, "Camera shake", "fx-shake", 0, 10, 1},
+			{1, "Pulse", "fx-pulse", 0, 10, 1},
 		}},
 	};
 	return p;
@@ -91,7 +109,7 @@ protected:
 	CCLabelBMFont* m_pageNum = nullptr;
 
 	bool initMenu() {
-		if (!Popup::init(460.f, 300.f)) return false;
+		if (!Popup::init(460.f, 340.f)) return false;
 		s_open = this;
 		this->setTitle("Mod Menu");
 
