@@ -1,0 +1,53 @@
+{
+	"geode": "5.11.2",
+	"gd": {
+		"win": "*",
+		"android": "*"
+	},
+	"id": "user.autojump",
+	"name": "Mod Menu",
+	"version": "v2.0.0",
+	"developer": "user",
+	"description": "Menu on Tab: noclip, speedhack, auto bot, macro record/replay, safe mode.",
+	"settings": {
+		"enabled": {
+			"type": "bool",
+			"name": "Bot enabled",
+			"default": false
+		},
+		"mode": {
+			"type": "string",
+			"name": "Bot mode",
+			"description": "Auto bot = plays cube/wave by itself. Record macro = record your run. Replay macro = plays the saved run.",
+			"default": "Auto bot",
+			"one-of": ["Auto bot", "Record macro", "Replay macro"]
+		},
+		"legit": {
+			"type": "int",
+			"name": "Mistakes level",
+			"description": "Auto bot only. 0 = perfect, 10 = human-like mistakes.",
+			"default": 0,
+			"min": 0,
+			"max": 10,
+			"control": { "slider": true }
+		},
+		"noclip": {
+			"type": "bool",
+			"name": "Noclip",
+			"default": false
+		},
+		"speed": {
+			"type": "float",
+			"name": "Speedhack",
+			"default": 1.0,
+			"min": 0.1,
+			"max": 5.0
+		},
+		"safe-mode": {
+			"type": "bool",
+			"name": "Safe mode",
+			"description": "Blocks level completion if cheats were on during the attempt.",
+			"default": true
+		}
+	}
+}
