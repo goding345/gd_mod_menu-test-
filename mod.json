@@ -6,9 +6,9 @@
 	},
 	"id": "user.autojump",
 	"name": "Mod Menu",
-	"version": "v2.1.0",
+	"version": "v2.2.0",
 	"developer": "user",
-	"description": "Menu on Tab: noclip, jump hack, autoclicker, speedhack, auto bot, macro, visual options, safe mode.",
+	"description": "Menu on Tab: cheats, auto bot, macros and lots of visual effects (snow, rain, stretch, tilt...).",
 	"settings": {
 		"enabled": {
 			"type": "bool",
@@ -91,6 +91,90 @@
 			"type": "bool",
 			"name": "Solid wave trail",
 			"default": false
+		},
+		"fx-snow": {
+			"type": "int",
+			"name": "Snow",
+			"default": 0,
+			"min": 0,
+			"max": 10
+		},
+		"fx-rain": {
+			"type": "int",
+			"name": "Rain",
+			"default": 0,
+			"min": 0,
+			"max": 10
+		},
+		"fx-fireflies": {
+			"type": "int",
+			"name": "Fireflies",
+			"default": 0,
+			"min": 0,
+			"max": 10
+		},
+		"fx-stretch-x": {
+			"type": "float",
+			"name": "Stretch X",
+			"default": 1.0,
+			"min": 0.3,
+			"max": 3.0
+		},
+		"fx-stretch-y": {
+			"type": "float",
+			"name": "Stretch Y",
+			"default": 1.0,
+			"min": 0.3,
+			"max": 3.0
+		},
+		"fx-zoom": {
+			"type": "float",
+			"name": "Zoom",
+			"default": 1.0,
+			"min": 0.3,
+			"max": 3.0
+		},
+		"fx-tilt": {
+			"type": "int",
+			"name": "Tilt (deg)",
+			"default": 0,
+			"min": -45,
+			"max": 45
+		},
+		"fx-tint": {
+			"type": "int",
+			"name": "Rainbow tint",
+			"default": 0,
+			"min": 0,
+			"max": 10
+		},
+		"fx-vignette": {
+			"type": "int",
+			"name": "Vignette",
+			"default": 0,
+			"min": 0,
+			"max": 10
+		},
+		"fx-wobble": {
+			"type": "int",
+			"name": "Wobble",
+			"default": 0,
+			"min": 0,
+			"max": 10
+		},
+		"fx-shake": {
+			"type": "int",
+			"name": "Camera shake",
+			"default": 0,
+			"min": 0,
+			"max": 10
+		},
+		"fx-pulse": {
+			"type": "int",
+			"name": "Pulse",
+			"default": 0,
+			"min": 0,
+			"max": 10
 		}
 	}
 }
