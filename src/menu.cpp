@@ -17,7 +17,7 @@ public:
 
 	static HackMenu* create() {
 		auto ret = new HackMenu();
-		if (ret->init()) {
+		if (ret->initMenu()) {
 			ret->autorelease();
 			return ret;
 		}
@@ -29,12 +29,16 @@ public:
 		if (s_open == this) s_open = nullptr;
 	}
 
+	void closeMenu() {
+		this->keyBackClicked();
+	}
+
 protected:
 	CCLabelBMFont* m_speedLabel = nullptr;
 	CCLabelBMFont* m_legitLabel = nullptr;
 	CCLabelBMFont* m_modeLabel = nullptr;
 
-	bool init() {
+	bool initMenu() {
 		if (!Popup::init(420.f, 290.f)) return false;
 		s_open = this;
 		this->setTitle("Mod Menu");
@@ -151,7 +155,7 @@ class $modify(MenuScheduler, CCScheduler) {
 		bool now = tabKeyDown();
 		if (now && !prevTab) {
 			if (HackMenu::s_open) {
-				HackMenu::s_open->keyBackClicked();
+				HackMenu::s_open->closeMenu();
 			} else if (auto menu = HackMenu::create()) {
 				menu->show();
 			}
