@@ -40,9 +40,16 @@ static std::vector<Page> const& pages() {
 			{2, "Speed", "speed", 0.1, 5.0, 0.1},
 			{0, "Safe mode", "safe-mode", 0, 0, 0},
 			{0, "Indicator", "indicator", 0, 0, 0},
+			{0, "Restart R", "restart-key", 0, 0, 0},
+			{0, "Show FPS", "show-fps", 0, 0, 0},
 		}},
-		{"Look", {
+		{"Icons", {
+			{0, "Icon hack", "icon-hack", 0, 0, 0},
+			{0, "Rainbow", "rainbow-icon", 0, 0, 0},
+			{1, "Rainb. spd", "rainbow-speed", 1, 10, 1},
 			{0, "Hide player", "hide-player", 0, 0, 0},
+		}},
+		{"Wave", {
 			{0, "Hide wave", "hide-wave", 0, 0, 0},
 			{0, "Solid wave", "solid-wave", 0, 0, 0},
 		}},
@@ -56,6 +63,7 @@ static std::vector<Page> const& pages() {
 			{2, "Stretch Y", "fx-stretch-y", 0.3, 3.0, 0.1},
 			{2, "Zoom", "fx-zoom", 0.3, 3.0, 0.1},
 			{1, "Tilt", "fx-tilt", -45, 45, 5},
+			{0, "Mirror", "fx-mirror", 0, 0, 0},
 		}},
 		{"Fun", {
 			{1, "Rainbow", "fx-tint", 0, 10, 1},
@@ -64,8 +72,28 @@ static std::vector<Page> const& pages() {
 			{1, "Shake", "fx-shake", 0, 10, 1},
 			{1, "Pulse", "fx-pulse", 0, 10, 1},
 		}},
+		{"Extra", {
+			{0, "Flip screen", "fx-flip", 0, 0, 0},
+			{1, "Spin", "fx-spin", 0, 10, 1},
+			{0, "Show clock", "show-clock", 0, 0, 0},
+			{4, "Reset FX", "", 0, 0, 0},
+		}},
 	};
 	return p;
+}
+
+// kind 4: кнопка "сбросить все эффекты"
+static void resetFx() {
+	auto m = Mod::get();
+	for (char const* k : {"fx-snow", "fx-rain", "fx-fireflies", "fx-tilt", "fx-tint", "fx-vignette",
+		"fx-wobble", "fx-shake", "fx-pulse", "fx-spin"}) {
+		m->setSettingValue<int64_t>(k, 0);
+	}
+	for (char const* k : {"fx-stretch-x", "fx-stretch-y", "fx-zoom"}) {
+		m->setSettingValue<double>(k, 1.0);
+	}
+	m->setSettingValue<bool>("fx-mirror", false);
+	m->setSettingValue<bool>("fx-flip", false);
 }
 
 static std::string valueText(Row const& r) {
@@ -152,7 +180,7 @@ public:
 	}
 
 private:
-	static constexpr float kPanelW = 76.f;
+	static constexpr float kPanelW = 84.f;
 	static constexpr float kHeader = 15.f;
 	static constexpr float kRow = 13.f;
 
@@ -185,20 +213,35 @@ private:
 		auto const& pg = pages();
 		int n = static_cast<int>(pg.size());
 		float gap = 4.f;
-		float totalW = n * kPanelW + (n - 1) * gap;
-		float x0 = (win.width - totalW) / 2.f;
+		int perRow = std::max(1, static_cast<int>((win.width - 12.f + gap) / (kPanelW + gap)));
 		auto mod = Mod::get();
+
+		auto heightOf = [&](int idx) {
+			return kHeader + static_cast<float>(pg[idx].second.size()) * kRow + 3.f;
+		};
+		std::vector<float> rowTop;
+		float top = win.height - 30.f;
+		for (int r = 0; r * perRow < n; ++r) {
+			rowTop.push_back(top);
+			float mh = 0.f;
+			for (int c = 0; c < perRow && r * perRow + c < n; ++c) mh = std::max(mh, heightOf(r * perRow + c));
+			top -= mh + 6.f;
+		}
 
 		for (int p = 0; p < n; ++p) {
 			PanelUI pn;
 			int rows = static_cast<int>(pg[p].second.size());
 			pn.w = kPanelW;
-			pn.h = kHeader + rows * kRow + 3.f;
+			pn.h = heightOf(p);
 
-			float defX = x0 + p * (kPanelW + gap);
-			float defY = win.height - 30.f - pn.h;
-			float px = static_cast<float>(mod->getSavedValue<double>(fmt::format("panel-x-{}", p), defX));
-			float py = static_cast<float>(mod->getSavedValue<double>(fmt::format("panel-y-{}", p), defY));
+			int r = p / perRow;
+			int c = p % perRow;
+			int cnt = std::min(perRow, n - r * perRow);
+			float x0 = (win.width - (cnt * kPanelW + (cnt - 1) * gap)) / 2.f;
+			float defX = x0 + c * (kPanelW + gap);
+			float defY = rowTop[r] - pn.h;
+			float px = static_cast<float>(mod->getSavedValue<double>(fmt::format("pnl2-x-{}", p), defX));
+			float py = static_cast<float>(mod->getSavedValue<double>(fmt::format("pnl2-y-{}", p), defY));
 			px = std::clamp(px, 0.f, win.width - pn.w);
 			py = std::clamp(py, 0.f, win.height - pn.h);
 
@@ -237,7 +280,9 @@ private:
 				label->setPosition(ccp(4.f, cy));
 				pn.node->addChild(label);
 
-				if (ru.row->kind == 0) {
+				if (ru.row->kind == 4) {
+					label->setColor(ccc3(238, 74, 156));
+				} else if (ru.row->kind == 0) {
 					auto box = CCLayerColor::create(ccc4(90, 90, 100, 255), 8.f, 8.f);
 					box->setPosition(ccp(pn.w - 12.f, cy - 4.f));
 					pn.node->addChild(box);
@@ -272,18 +317,34 @@ private:
 		return true;
 	}
 
+	void refreshAll() {
+		auto mod = Mod::get();
+		for (auto& pn : m_panels) {
+			for (auto& ru : pn.rows) {
+				if (ru.row->kind == 0 && ru.check) ru.check->setVisible(mod->getSettingValue<bool>(ru.row->key));
+				else if (ru.value) ru.value->setString(valueText(*ru.row).c_str());
+			}
+		}
+	}
+
 	void finishDrag() {
 		if (m_drag < 0) return;
 		auto mod = Mod::get();
 		auto& pn = m_panels[m_drag];
-		mod->setSavedValue<double>(fmt::format("panel-x-{}", m_drag), pn.node->getPositionX());
-		mod->setSavedValue<double>(fmt::format("panel-y-{}", m_drag), pn.node->getPositionY());
+		mod->setSavedValue<double>(fmt::format("pnl2-x-{}", m_drag), pn.node->getPositionX());
+		mod->setSavedValue<double>(fmt::format("pnl2-y-{}", m_drag), pn.node->getPositionY());
 		m_drag = -1;
 	}
 
 	void clickRow(RowUI& ru, float lx, float w) {
 		auto mod = Mod::get();
 		auto const& r = *ru.row;
+
+		if (r.kind == 4) {
+			resetFx();
+			this->refreshAll();
+			return;
+		}
 
 		if (r.kind == 0) {
 			bool v = !mod->getSettingValue<bool>(r.key);
