@@ -200,16 +200,20 @@ private:
 		int wobble = static_cast<int>(mod->getSettingValue<int64_t>("fx-wobble"));
 		int shake = static_cast<int>(mod->getSettingValue<int64_t>("fx-shake"));
 		int pulse = static_cast<int>(mod->getSettingValue<int64_t>("fx-pulse"));
+		bool mirror = mod->getSettingValue<bool>("fx-mirror");
+		bool flip = mod->getSettingValue<bool>("fx-flip");
+		int spin = static_cast<int>(mod->getSettingValue<int64_t>("fx-spin"));
 
 		float rot = static_cast<float>(tilt) + wobble * 0.6f * std::sin(m_t * 1.7f);
 		float pz = 1.f + pulse * 0.012f * std::sin(m_t * 6.f);
-		float zx = sx * zoom * pz;
-		float zy = sy * zoom * pz;
+		if (spin > 0) rot += std::fmod(m_t * spin * 20.f, 360.f);
+		float zx = sx * zoom * pz * (mirror ? -1.f : 1.f);
+		float zy = sy * zoom * pz * (flip ? -1.f : 1.f);
 		CCPoint off = ccp(0, 0);
 		if (shake > 0) off = ccp(frand(-1.f, 1.f) * shake * 0.6f, frand(-1.f, 1.f) * shake * 0.6f);
 
 		bool active = std::abs(zx - 1.f) > 0.001f || std::abs(zy - 1.f) > 0.001f ||
-			std::abs(rot) > 0.001f || shake > 0;
+			std::abs(rot) > 0.001f || shake > 0 || spin > 0;
 
 		auto scene = CCDirector::get()->getRunningScene();
 		if (!scene) return;
