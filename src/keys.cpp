@@ -17,12 +17,28 @@ bool tabKeyDown() {
 bool restartKeyDown() {
 	return keyDownInGame('R');
 }
+
+bool shiftKeyDown() {
+	return keyDownInGame(VK_SHIFT);
+}
+
+bool letterKeyDown(char c) {
+	return keyDownInGame(static_cast<int>(c));
+}
 #else
 bool tabKeyDown() {
 	return false;
 }
 
 bool restartKeyDown() {
+	return false;
+}
+
+bool shiftKeyDown() {
+	return false;
+}
+
+bool letterKeyDown(char) {
 	return false;
 }
 #endif
