@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <string>
 #include <chrono>
+#include <deque>
 #include <ctime>
 #include <algorithm>
 #include <array>
@@ -648,7 +649,7 @@ class $modify(BotLayer, GJBaseGameLayer) {
 				this->handleButton(false, 1, true);
 				f->holding = false;
 			}
-			this->waveLogic(dt);
+			if (Mod::get()->getSettingValue<bool>("bot-wave")) this->waveLogic(dt);
 			return;
 		}
 
@@ -661,13 +662,15 @@ class $modify(BotLayer, GJBaseGameLayer) {
 
 		bool cubeLike = !(m_player1->m_isShip || m_player1->m_isBird || m_player1->m_isBall ||
 			m_player1->m_isRobot || m_player1->m_isSpider || m_player1->m_isSwing);
-		if (cubeLike) this->cubeLogic(dt);
+		if (cubeLike && Mod::get()->getSettingValue<bool>("bot-cube")) this->cubeLogic(dt);
 	}
 };
 
 
 CCNode* createFxLayer(); // visuals.cpp
 bool restartKeyDown(); // keys.cpp
+bool letterKeyDown(char c); // keys.cpp
+bool frameFrozen(); // menu.cpp
 
 static ccColor3B rainbowColor(float h) {
 	auto cl = [](float v) { return std::clamp(v, 0.f, 1.f); };
@@ -683,6 +686,11 @@ static bool cheatsOn() {
 		m->getSettingValue<bool>("enabled") ||
 		m->getSettingValue<bool>("jumphack") ||
 		m->getSettingValue<bool>("autoclick") ||
+		m->getSettingValue<bool>("hazard-noclip") ||
+		m->getSettingValue<bool>("wave-noclip") ||
+		m->getSettingValue<bool>("slowmo-key") ||
+		m->getSettingValue<bool>("startpos-switch") ||
+		m->getSettingValue<bool>("frame-step") ||
 		std::abs(m->getSettingValue<double>("speed") - 1.0) > 0.001;
 }
 
@@ -704,6 +712,17 @@ class $modify(BotPlayLayer, PlayLayer) {
 		int fpsShown = 0;
 		bool prevR = false;
 		float hue = 0.f;
+		bool wasOpaque = false;
+		std::chrono::steady_clock::time_point attemptStart = std::chrono::steady_clock::now();
+
+		// инструменты: хитбоксы, путь, стартпозы
+		CCDrawNode* hbNode = nullptr;
+		CCDrawNode* pathNode = nullptr;
+		std::vector<std::pair<float, GameObject*>> hbObjs; // по начальной X
+		std::deque<CCPoint> path;
+		std::vector<StartPosObject*> startPos;
+		int startIdx = -1;
+		bool prevQ = false, prevE = false;
 	};
 
 	void setupHasCompleted() {
@@ -726,6 +745,26 @@ class $modify(BotPlayLayer, PlayLayer) {
 		info->setZOrder(100);
 		m_uiLayer->addChild(info);
 		m_fields->infoLabel = info;
+
+		// слои для хитбоксов и пути (в мире уровня)
+		m_fields->hbNode = CCDrawNode::create();
+		m_objectLayer->addChild(m_fields->hbNode, 9998);
+		m_fields->pathNode = CCDrawNode::create();
+		m_objectLayer->addChild(m_fields->pathNode, 9997);
+
+		for (auto obj : CCArrayExt<GameObject*>(m_objects)) {
+			if (obj->m_objectID == 31) {
+				if (auto sp = typeinfo_cast<StartPosObject*>(obj)) m_fields->startPos.push_back(sp);
+			}
+			auto t = obj->m_objectType;
+			if (!obj->m_isNoTouch && (t == GameObjectType::Hazard || t == GameObjectType::Solid || t == GameObjectType::Slope)) {
+				m_fields->hbObjs.push_back({obj->getPositionX(), obj});
+			}
+		}
+		std::sort(m_fields->startPos.begin(), m_fields->startPos.end(),
+			[](StartPosObject* a, StartPosObject* b) { return a->getPositionX() < b->getPositionX(); });
+		std::sort(m_fields->hbObjs.begin(), m_fields->hbObjs.end(),
+			[](auto const& a, auto const& b) { return a.first < b.first; });
 
 		if (auto fx = createFxLayer()) {
 			// в сцену (рядом с игрой), чтобы повороты экрана не крутили снег и виньетку
@@ -760,6 +799,18 @@ class $modify(BotPlayLayer, PlayLayer) {
 					m_fields->wasHiddenWave = false;
 				}
 				if (mod->getSettingValue<bool>("solid-wave")) m_player1->m_waveTrail->m_isSolid = true;
+			}
+		}
+
+		// прозрачность игрока
+		if (m_player1) {
+			int op = static_cast<int>(mod->getSettingValue<int64_t>("player-opacity"));
+			if (op < 10) {
+				m_player1->setOpacity(static_cast<GLubyte>(std::clamp(op, 0, 10) * 25));
+				m_fields->wasOpaque = true;
+			} else if (m_fields->wasOpaque) {
+				m_player1->setOpacity(255);
+				m_fields->wasOpaque = false;
 			}
 		}
 
@@ -799,7 +850,15 @@ class $modify(BotPlayLayer, PlayLayer) {
 		}
 		if (m_fields->infoLabel) {
 			std::string info;
+			if (frameFrozen()) info += "FROZEN (G = step)   ";
+			if (mod->getSettingValue<bool>("startpos-switch") && !m_fields->startPos.empty()) {
+				info += fmt::format("StartPos {}/{} (Q/E)   ", m_fields->startIdx + 1, m_fields->startPos.size());
+			}
 			if (mod->getSettingValue<bool>("show-fps")) info += fmt::format("FPS {}   ", m_fields->fpsShown);
+			if (mod->getSettingValue<bool>("show-time")) {
+				double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - m_fields->attemptStart).count();
+				info += fmt::format("T {:.1f}s   ", secs);
+			}
 			if (mod->getSettingValue<bool>("show-clock")) {
 				std::time_t tt = std::time(nullptr);
 				char buf[16] = {0};
@@ -809,6 +868,72 @@ class $modify(BotPlayLayer, PlayLayer) {
 			if (info != m_fields->lastInfo) {
 				m_fields->lastInfo = info;
 				m_fields->infoLabel->setString(info.c_str());
+			}
+		}
+
+		// ----- инструменты практики -----
+		// layout mode: прячем декорации
+		if (mod->getSettingValue<bool>("layout-mode")) {
+			for (auto obj : CCArrayExt<GameObject*>(m_objects)) {
+				if (obj->m_objectType == GameObjectType::Decoration) obj->setVisible(false);
+			}
+		}
+
+		// хитбоксы
+		if (m_fields->hbNode) {
+			m_fields->hbNode->clear();
+			if (mod->getSettingValue<bool>("hitboxes") && m_player1) {
+				auto drawRectBox = [&](CCRect const& r, ccColor4F fill, ccColor4F border) {
+					CCPoint v[4] = {
+						ccp(r.getMinX(), r.getMinY()), ccp(r.getMaxX(), r.getMinY()),
+						ccp(r.getMaxX(), r.getMaxY()), ccp(r.getMinX(), r.getMaxY())
+					};
+					m_fields->hbNode->drawPolygon(v, 4, fill, 0.5f, border);
+				};
+				float px = m_player1->getPositionX();
+				auto it = std::lower_bound(m_fields->hbObjs.begin(), m_fields->hbObjs.end(), px - 320.f,
+					[](std::pair<float, GameObject*> const& a, float v) { return a.first < v; });
+				for (; it != m_fields->hbObjs.end() && it->first <= px + 480.f; ++it) {
+					auto obj = it->second;
+					auto t = obj->m_objectType;
+					if (t == GameObjectType::Hazard) {
+						drawRectBox(obj->getObjectRect(), ccc4f(1.f, 0.f, 0.f, 0.12f), ccc4f(1.f, 0.1f, 0.1f, 1.f));
+					} else {
+						drawRectBox(obj->getObjectRect(), ccc4f(0.f, 0.3f, 1.f, 0.10f), ccc4f(0.2f, 0.5f, 1.f, 1.f));
+					}
+				}
+				drawRectBox(m_player1->getObjectRect(), ccc4f(1.f, 1.f, 0.f, 0.10f), ccc4f(1.f, 1.f, 0.f, 1.f));
+			}
+		}
+
+		// путь игрока
+		if (m_fields->pathNode) {
+			m_fields->pathNode->clear();
+			int len = static_cast<int>(mod->getSettingValue<int64_t>("path-trail")) * 100;
+			if (len > 0 && m_player1) {
+				m_fields->path.push_back(m_player1->getPosition());
+				while (static_cast<int>(m_fields->path.size()) > len) m_fields->path.pop_front();
+				for (size_t i = 1; i < m_fields->path.size(); ++i) {
+					m_fields->pathNode->drawSegment(m_fields->path[i - 1], m_fields->path[i], 0.8f, ccc4f(0.2f, 0.9f, 1.f, 0.9f));
+				}
+			} else {
+				m_fields->path.clear();
+			}
+		}
+
+		// переключатель стартпозиций: Q - назад, E - вперёд
+		if (mod->getSettingValue<bool>("startpos-switch") && !m_fields->startPos.empty()) {
+			bool q = letterKeyDown('Q');
+			bool e = letterKeyDown('E');
+			int n = static_cast<int>(m_fields->startPos.size());
+			int old = m_fields->startIdx;
+			if (e && !m_fields->prevE) m_fields->startIdx = std::min(m_fields->startIdx + 1, n - 1);
+			if (q && !m_fields->prevQ) m_fields->startIdx = std::max(m_fields->startIdx - 1, -1);
+			m_fields->prevQ = q;
+			m_fields->prevE = e;
+			if (m_fields->startIdx != old) {
+				this->setStartPosObject(m_fields->startIdx >= 0 ? m_fields->startPos[m_fields->startIdx] : nullptr);
+				this->resetLevel();
 			}
 		}
 
@@ -844,11 +969,18 @@ class $modify(BotPlayLayer, PlayLayer) {
 		m_fields->frames = 0;
 		m_fields->hitFrames = 0;
 		m_fields->lastHitFrame = -1;
+		m_fields->attemptStart = std::chrono::steady_clock::now();
+		m_fields->path.clear();
 	}
 
 	// ноуклип: не умираем, кроме анти-чит шипа
 	void destroyPlayer(PlayerObject* player, GameObject* object) {
-		if (Mod::get()->getSettingValue<bool>("noclip") && object != m_anticheatSpike) {
+		auto md = Mod::get();
+		bool ignore = md->getSettingValue<bool>("noclip");
+		if (!ignore && object && md->getSettingValue<bool>("hazard-noclip") &&
+			object->m_objectType == GameObjectType::Hazard) ignore = true;
+		if (!ignore && player && md->getSettingValue<bool>("wave-noclip") && player->m_isDart) ignore = true;
+		if (ignore && object != m_anticheatSpike) {
 			if (m_fields->lastHitFrame != m_fields->frames) {
 				m_fields->lastHitFrame = m_fields->frames;
 				++m_fields->hitFrames;
