@@ -8,7 +8,7 @@ using namespace geode::prelude;
 
 struct FxParticle {
 	CCLayerColor* node = nullptr;
-	float x = 0.f, y = 0.f, vx = 0.f, vy = 0.f, phase = 0.f;
+	float x = 0.f, y = 0.f, vx = 0.f, vy = 0.f, phase = 0.f, rot = 0.f, vr = 0.f;
 };
 
 static ccColor3B hueColor(float h) {
@@ -40,20 +40,25 @@ public:
 	void update(float dt) override {
 		m_t += dt;
 		auto mod = Mod::get();
+		auto gi = [&](char const* key) { return static_cast<int>(mod->getSettingValue<int64_t>(key)); };
 
-		int snow = static_cast<int>(mod->getSettingValue<int64_t>("fx-snow"));
-		int rain = static_cast<int>(mod->getSettingValue<int64_t>("fx-rain"));
-		int fire = static_cast<int>(mod->getSettingValue<int64_t>("fx-fireflies"));
-		this->adjustPool(m_snow, snow * 12, 0);
-		this->adjustPool(m_rain, rain * 15, 1);
-		this->adjustPool(m_fire, fire * 5, 2);
+		this->adjustPool(m_snow, gi("fx-snow") * 12, 0);
+		this->adjustPool(m_rain, gi("fx-rain") * 15, 1);
+		this->adjustPool(m_fire, gi("fx-fireflies") * 5, 2);
+		this->adjustPool(m_petal, gi("fx-petals") * 8, 3);
+		this->adjustPool(m_star, gi("fx-stars") * 8, 4);
 
-		this->stepSnow(dt);
-		this->stepRain(dt);
+		float wind = gi("fx-wind") * 6.f;
+		this->stepFalling(m_snow, dt, wind, true);
+		this->stepFalling(m_rain, dt, wind, false);
 		this->stepFireflies(dt);
+		this->stepPetals(dt, wind);
+		this->stepStars();
 
-		this->updateTint(static_cast<int>(mod->getSettingValue<int64_t>("fx-tint")));
-		this->updateVignette(static_cast<int>(mod->getSettingValue<int64_t>("fx-vignette")));
+		this->updateTint(gi("fx-tint"));
+		this->updateVignette(gi("fx-vignette"));
+		this->updateLines(gi("fx-scanlines"));
+		this->updateBars(gi("fx-letterbox"));
 		this->updateScene();
 	}
 
@@ -61,8 +66,12 @@ private:
 	CCSize m_win;
 	CCLayerColor* m_tint = nullptr;
 	CCLayerGradient* m_vig[4] = {nullptr, nullptr, nullptr, nullptr};
+	std::vector<CCLayerColor*> m_lines;
+	CCLayerColor* m_barTop = nullptr;
+	CCLayerColor* m_barBottom = nullptr;
 	int m_lastVig = -1;
-	std::vector<FxParticle> m_snow, m_rain, m_fire;
+	int m_lastLines = -1;
+	std::vector<FxParticle> m_snow, m_rain, m_fire, m_petal, m_star;
 	std::mt19937 m_rng{std::random_device{}()};
 	float m_t = 0.f;
 	bool m_sceneActive = false;
@@ -80,7 +89,7 @@ private:
 		m_win = CCDirector::get()->getWinSize();
 
 		m_tint = CCLayerColor::create(ccc4(255, 255, 255, 0), m_win.width, m_win.height);
-		this->addChild(m_tint);
+		this->addChild(m_tint, 0);
 
 		float ew = m_win.width * 0.2f;
 		float eh = m_win.height * 0.25f;
@@ -94,13 +103,31 @@ private:
 			if (i == 2) g->setPosition({0.f, m_win.height - eh});
 			if (i == 3) g->setPosition({0.f, 0.f});
 			g->setVisible(false);
-			this->addChild(g);
+			this->addChild(g, 1);
 			m_vig[i] = g;
 		}
+
+		// линии развёртки (как у старого монитора)
+		for (float y = 0.f; y < m_win.height; y += 3.f) {
+			auto line = CCLayerColor::create(ccc4(0, 0, 0, 0), m_win.width, 1.f);
+			line->setPosition({0.f, y});
+			line->setVisible(false);
+			this->addChild(line, 3);
+			m_lines.push_back(line);
+		}
+
+		// чёрные полосы сверху и снизу (кино)
+		m_barTop = CCLayerColor::create(ccc4(0, 0, 0, 255), m_win.width, 1.f);
+		m_barBottom = CCLayerColor::create(ccc4(0, 0, 0, 255), m_win.width, 1.f);
+		m_barTop->setVisible(false);
+		m_barBottom->setVisible(false);
+		this->addChild(m_barTop, 4);
+		this->addChild(m_barBottom, 4);
+
 		this->scheduleUpdate();
 	}
 
-	// type: 0 снег, 1 дождь, 2 светлячки
+	// type: 0 снег, 1 дождь, 2 светлячки, 3 лепестки, 4 звёзды
 	void adjustPool(std::vector<FxParticle>& pool, int target, int type) {
 		while (static_cast<int>(pool.size()) < target) {
 			FxParticle p;
@@ -116,16 +143,26 @@ private:
 				col = ccc4(170, 200, 255, 170);
 				p.vy = frand(380.f, 560.f);
 				p.vx = -40.f;
-			} else {
+			} else if (type == 2) {
 				w = h = frand(2.f, 4.f);
 				col = ccc4(220, 255, 120, 200);
+			} else if (type == 3) {
+				w = frand(3.f, 6.f);
+				h = w * 0.6f;
+				col = ccc4(255, 150, 190, 210);
+				p.vy = frand(18.f, 40.f);
+				p.vx = frand(-10.f, 10.f);
+				p.vr = frand(-90.f, 90.f);
+			} else {
+				w = h = frand(1.5f, 3.f);
+				col = ccc4(255, 255, 255, 200);
 			}
 			p.phase = frand(0.f, 6.28f);
 			p.x = frand(0.f, m_win.width);
 			p.y = frand(0.f, m_win.height);
 			p.node = CCLayerColor::create(col, w, h);
 			p.node->setPosition({p.x, p.y});
-			this->addChild(p.node);
+			this->addChild(p.node, 2);
 			pool.push_back(p);
 		}
 		while (static_cast<int>(pool.size()) > target) {
@@ -143,21 +180,25 @@ private:
 		if (p.x > m_win.width + 16.f) p.x = -16.f;
 	}
 
-	void stepSnow(float dt) {
-		for (auto& p : m_snow) {
+	void stepFalling(std::vector<FxParticle>& pool, float dt, float wind, bool sway) {
+		for (auto& p : pool) {
 			p.y -= p.vy * dt;
-			p.x += (p.vx + std::sin(m_t * 1.3f + p.phase) * 12.f) * dt;
+			float dx = p.vx + wind;
+			if (sway) dx += std::sin(m_t * 1.3f + p.phase) * 12.f;
+			p.x += dx * dt;
 			this->wrap(p);
 			p.node->setPosition({p.x, p.y});
 		}
 	}
 
-	void stepRain(float dt) {
-		for (auto& p : m_rain) {
+	void stepPetals(float dt, float wind) {
+		for (auto& p : m_petal) {
 			p.y -= p.vy * dt;
-			p.x += p.vx * dt;
+			p.x += (p.vx + wind + std::sin(m_t * 1.1f + p.phase) * 20.f) * dt;
+			p.rot += p.vr * dt;
 			this->wrap(p);
 			p.node->setPosition({p.x, p.y});
+			p.node->setRotation(p.rot);
 		}
 	}
 
@@ -172,6 +213,13 @@ private:
 			p.node->setPosition({p.x, p.y});
 			float pulse = 0.5f + 0.5f * std::sin(m_t * 2.f + p.phase);
 			p.node->setOpacity(static_cast<GLubyte>(60.f + 195.f * pulse));
+		}
+	}
+
+	void stepStars() {
+		for (auto& p : m_star) {
+			float tw = 0.5f + 0.5f * std::sin(m_t * 1.5f + p.phase);
+			p.node->setOpacity(static_cast<GLubyte>(40.f + 215.f * tw));
 		}
 	}
 
@@ -195,12 +243,34 @@ private:
 		}
 	}
 
+	void updateLines(int level) {
+		if (level == m_lastLines) return;
+		m_lastLines = level;
+		for (auto line : m_lines) {
+			line->setVisible(level > 0);
+			line->setOpacity(static_cast<GLubyte>(std::clamp(level * 9, 0, 90)));
+		}
+	}
+
+	void updateBars(int level) {
+		bool on = level > 0;
+		m_barTop->setVisible(on);
+		m_barBottom->setVisible(on);
+		if (!on) return;
+		float h = static_cast<float>(level) * 5.f;
+		m_barTop->changeHeight(h);
+		m_barBottom->changeHeight(h);
+		m_barTop->setPosition({0.f, m_win.height - h});
+		m_barBottom->setPosition({0.f, 0.f});
+	}
+
 	void updateScene() {
 		auto mod = Mod::get();
 		float sx = static_cast<float>(mod->getSettingValue<double>("fx-stretch-x"));
 		float sy = static_cast<float>(mod->getSettingValue<double>("fx-stretch-y"));
 		float zoom = static_cast<float>(mod->getSettingValue<double>("fx-zoom"));
 		int tilt = static_cast<int>(mod->getSettingValue<int64_t>("fx-tilt"));
+		int skew = static_cast<int>(mod->getSettingValue<int64_t>("fx-skew"));
 		int wobble = static_cast<int>(mod->getSettingValue<int64_t>("fx-wobble"));
 		int shake = static_cast<int>(mod->getSettingValue<int64_t>("fx-shake"));
 		int pulse = static_cast<int>(mod->getSettingValue<int64_t>("fx-pulse"));
@@ -217,7 +287,7 @@ private:
 		if (shake > 0) off = ccp(frand(-1.f, 1.f) * shake * 0.6f, frand(-1.f, 1.f) * shake * 0.6f);
 
 		bool active = std::abs(zx - 1.f) > 0.001f || std::abs(zy - 1.f) > 0.001f ||
-			std::abs(rot) > 0.001f || shake > 0 || spin > 0;
+			std::abs(rot) > 0.001f || shake > 0 || spin > 0 || skew != 0;
 
 		// эффекты применяем только к самой игре, а не ко всей сцене:
 		// меню, пауза и наши оверлеи остаются ровными
@@ -245,6 +315,7 @@ private:
 			target->setScaleX(zx);
 			target->setScaleY(zy);
 			target->setRotation(rot);
+			target->setSkewX(static_cast<float>(skew));
 		} else if (m_sceneActive) {
 			this->resetScene();
 		}
@@ -258,6 +329,7 @@ private:
 		target->setScaleX(1.f);
 		target->setScaleY(1.f);
 		target->setRotation(0.f);
+		target->setSkewX(0.f);
 		target->setAnchorPoint(m_origAnchor);
 		target->setPosition(m_origPos);
 		target->ignoreAnchorPointForPosition(m_origIgnore);
