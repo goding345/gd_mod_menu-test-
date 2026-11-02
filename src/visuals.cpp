@@ -66,6 +66,10 @@ private:
 	std::mt19937 m_rng{std::random_device{}()};
 	float m_t = 0.f;
 	bool m_sceneActive = false;
+	CCNode* m_target = nullptr;
+	CCPoint m_origPos = ccp(0, 0);
+	CCPoint m_origAnchor = ccp(0, 0);
+	bool m_origIgnore = true;
 
 	float frand(float a, float b) {
 		std::uniform_real_distribution<float> d(a, b);
@@ -215,17 +219,32 @@ private:
 		bool active = std::abs(zx - 1.f) > 0.001f || std::abs(zy - 1.f) > 0.001f ||
 			std::abs(rot) > 0.001f || shake > 0 || spin > 0;
 
-		auto scene = CCDirector::get()->getRunningScene();
-		if (!scene) return;
+		// эффекты применяем только к самой игре, а не ко всей сцене:
+		// меню, пауза и наши оверлеи остаются ровными
+		CCNode* target = PlayLayer::get();
+		if (!target) {
+			m_sceneActive = false;
+			m_target = nullptr;
+			return;
+		}
+		if (target != m_target) {
+			m_target = target;
+			m_sceneActive = false;
+		}
 
 		if (active) {
-			scene->ignoreAnchorPointForPosition(false);
-			scene->setAnchorPoint(ccp(0.5f, 0.5f));
-			scene->setPosition(ccp(m_win.width / 2.f + off.x, m_win.height / 2.f + off.y));
-			scene->setScaleX(zx);
-			scene->setScaleY(zy);
-			scene->setRotation(rot);
-			m_sceneActive = true;
+			if (!m_sceneActive) {
+				m_origPos = target->getPosition();
+				m_origAnchor = target->getAnchorPoint();
+				m_origIgnore = target->isIgnoreAnchorPointForPosition();
+				m_sceneActive = true;
+			}
+			target->ignoreAnchorPointForPosition(false);
+			target->setAnchorPoint(ccp(0.5f, 0.5f));
+			target->setPosition(ccp(m_win.width / 2.f + off.x, m_win.height / 2.f + off.y));
+			target->setScaleX(zx);
+			target->setScaleY(zy);
+			target->setRotation(rot);
 		} else if (m_sceneActive) {
 			this->resetScene();
 		}
@@ -234,13 +253,14 @@ private:
 	void resetScene() {
 		if (!m_sceneActive) return;
 		m_sceneActive = false;
-		auto scene = CCDirector::get()->getRunningScene();
-		if (!scene) return;
-		scene->setScaleX(1.f);
-		scene->setScaleY(1.f);
-		scene->setRotation(0.f);
-		scene->setPosition(ccp(0, 0));
-		scene->ignoreAnchorPointForPosition(true);
+		CCNode* target = PlayLayer::get();
+		if (!target || target != m_target) return;
+		target->setScaleX(1.f);
+		target->setScaleY(1.f);
+		target->setRotation(0.f);
+		target->setAnchorPoint(m_origAnchor);
+		target->setPosition(m_origPos);
+		target->ignoreAnchorPointForPosition(m_origIgnore);
 	}
 };
 
