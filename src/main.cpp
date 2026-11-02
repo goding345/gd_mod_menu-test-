@@ -6,6 +6,8 @@
 #include <iomanip>
 #include <filesystem>
 #include <string>
+#include <chrono>
+#include <ctime>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -665,6 +667,15 @@ class $modify(BotLayer, GJBaseGameLayer) {
 
 
 CCNode* createFxLayer(); // visuals.cpp
+bool restartKeyDown(); // keys.cpp
+
+static ccColor3B rainbowColor(float h) {
+	auto cl = [](float v) { return std::clamp(v, 0.f, 1.f); };
+	float r = cl(std::fabs(h * 6.f - 3.f) - 1.f);
+	float g = cl(2.f - std::fabs(h * 6.f - 2.f));
+	float b = cl(2.f - std::fabs(h * 6.f - 4.f));
+	return ccc3(static_cast<GLubyte>(r * 255.f), static_cast<GLubyte>(g * 255.f), static_cast<GLubyte>(b * 255.f));
+}
 
 static bool cheatsOn() {
 	auto m = Mod::get();
@@ -685,6 +696,14 @@ class $modify(BotPlayLayer, PlayLayer) {
 		bool wasHiddenWave = false;
 		CCLabelBMFont* label = nullptr;
 		std::string lastText;
+
+		CCLabelBMFont* infoLabel = nullptr;
+		std::string lastInfo;
+		std::chrono::steady_clock::time_point fpsStart = std::chrono::steady_clock::now();
+		int fpsFrames = 0;
+		int fpsShown = 0;
+		bool prevR = false;
+		float hue = 0.f;
 	};
 
 	void setupHasCompleted() {
@@ -698,6 +717,15 @@ class $modify(BotPlayLayer, PlayLayer) {
 		label->setZOrder(100);
 		m_uiLayer->addChild(label);
 		m_fields->label = label;
+
+		auto info = CCLabelBMFont::create("", "chatFont.fnt");
+		info->setAnchorPoint({0.f, 0.f});
+		info->setScale(0.6f);
+		info->setOpacity(190);
+		info->setPosition({8.f, 6.f});
+		info->setZOrder(100);
+		m_uiLayer->addChild(info);
+		m_fields->infoLabel = info;
 
 		if (auto fx = createFxLayer()) m_uiLayer->addChild(fx, 90);
 	}
@@ -728,6 +756,55 @@ class $modify(BotPlayLayer, PlayLayer) {
 					m_fields->wasHiddenWave = false;
 				}
 				if (mod->getSettingValue<bool>("solid-wave")) m_player1->m_waveTrail->m_isSolid = true;
+			}
+		}
+
+		// радужная иконка
+		if (m_player1 && mod->getSettingValue<bool>("rainbow-icon")) {
+			int sp = static_cast<int>(mod->getSettingValue<int64_t>("rainbow-speed"));
+			m_fields->hue = std::fmod(m_fields->hue + static_cast<float>(sp) * 0.12f * dt, 1.f);
+			auto c1 = rainbowColor(m_fields->hue);
+			auto c2 = rainbowColor(std::fmod(m_fields->hue + 0.5f, 1.f));
+			m_player1->setColor(c1);
+			m_player1->setSecondColor(c2);
+			if (m_player2) {
+				m_player2->setColor(c2);
+				m_player2->setSecondColor(c1);
+			}
+		}
+
+		// быстрый рестарт на R
+		if (mod->getSettingValue<bool>("restart-key")) {
+			bool nowR = restartKeyDown();
+			if (nowR && !m_fields->prevR) this->resetLevel();
+			m_fields->prevR = nowR;
+		} else {
+			m_fields->prevR = false;
+		}
+
+		// FPS и часы (по реальному времени)
+		++m_fields->fpsFrames;
+		{
+			auto nowT = std::chrono::steady_clock::now();
+			double el = std::chrono::duration<double>(nowT - m_fields->fpsStart).count();
+			if (el >= 0.25) {
+				m_fields->fpsShown = static_cast<int>(std::lround(m_fields->fpsFrames / el));
+				m_fields->fpsFrames = 0;
+				m_fields->fpsStart = nowT;
+			}
+		}
+		if (m_fields->infoLabel) {
+			std::string info;
+			if (mod->getSettingValue<bool>("show-fps")) info += fmt::format("FPS {}   ", m_fields->fpsShown);
+			if (mod->getSettingValue<bool>("show-clock")) {
+				std::time_t tt = std::time(nullptr);
+				char buf[16] = {0};
+				if (auto lt = std::localtime(&tt)) std::strftime(buf, sizeof(buf), "%H:%M:%S", lt);
+				info += buf;
+			}
+			if (info != m_fields->lastInfo) {
+				m_fields->lastInfo = info;
+				m_fields->infoLabel->setString(info.c_str());
 			}
 		}
 
