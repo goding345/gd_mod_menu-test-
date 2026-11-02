@@ -6,7 +6,7 @@
 	},
 	"id": "user.autojump",
 	"name": "Mod Menu",
-	"version": "v2.3.0",
+	"version": "v2.5.0",
 	"developer": "user",
 	"description": "Menu on Tab: cheats, auto bot, macros, icon hack, rainbow icon, FPS/clock, visual effects.",
 	"settings": {
@@ -225,6 +225,119 @@
 			"default": 0,
 			"min": 0,
 			"max": 10
+		},
+		"hazard-noclip": {
+			"type": "bool",
+			"name": "Hazard noclip",
+			"default": false
+		},
+		"wave-noclip": {
+			"type": "bool",
+			"name": "Wave noclip",
+			"default": false
+		},
+		"bot-cube": {
+			"type": "bool",
+			"name": "Bot: cube",
+			"default": true
+		},
+		"bot-wave": {
+			"type": "bool",
+			"name": "Bot: wave",
+			"default": true
+		},
+		"slowmo-key": {
+			"type": "bool",
+			"name": "Slow-mo on Shift",
+			"default": false
+		},
+		"slowmo": {
+			"type": "float",
+			"name": "Slow-mo speed",
+			"default": 0.3,
+			"min": 0.1,
+			"max": 1.0
+		},
+		"show-time": {
+			"type": "bool",
+			"name": "Show attempt time",
+			"default": false
+		},
+		"player-opacity": {
+			"type": "int",
+			"name": "Player opacity",
+			"default": 10,
+			"min": 1,
+			"max": 10
+		},
+		"fx-petals": {
+			"type": "int",
+			"name": "Petals",
+			"default": 0,
+			"min": 0,
+			"max": 10
+		},
+		"fx-stars": {
+			"type": "int",
+			"name": "Stars",
+			"default": 0,
+			"min": 0,
+			"max": 10
+		},
+		"fx-wind": {
+			"type": "int",
+			"name": "Wind",
+			"default": 0,
+			"min": -10,
+			"max": 10
+		},
+		"fx-skew": {
+			"type": "int",
+			"name": "Skew X",
+			"default": 0,
+			"min": -45,
+			"max": 45
+		},
+		"fx-scanlines": {
+			"type": "int",
+			"name": "Scanlines",
+			"default": 0,
+			"min": 0,
+			"max": 10
+		},
+		"fx-letterbox": {
+			"type": "int",
+			"name": "Letterbox",
+			"default": 0,
+			"min": 0,
+			"max": 10
+		},
+		"hitboxes": {
+			"type": "bool",
+			"name": "Show hitboxes",
+			"default": false
+		},
+		"layout-mode": {
+			"type": "bool",
+			"name": "Layout mode",
+			"default": false
+		},
+		"path-trail": {
+			"type": "int",
+			"name": "Path trail",
+			"default": 0,
+			"min": 0,
+			"max": 10
+		},
+		"startpos-switch": {
+			"type": "bool",
+			"name": "StartPos switcher (Q/E)",
+			"default": false
+		},
+		"frame-step": {
+			"type": "bool",
+			"name": "Frame step (F freeze, G step)",
+			"default": false
 		}
 	}
 }
