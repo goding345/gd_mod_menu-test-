@@ -9,6 +9,14 @@
 using namespace geode::prelude;
 
 bool tabKeyDown(); // keys.cpp
+bool shiftKeyDown(); // keys.cpp
+bool letterKeyDown(char c); // keys.cpp
+
+static bool g_frozen = false;
+static bool g_stepReq = false;
+bool frameFrozen() {
+	return g_frozen;
+}
 
 static char const* kModes[3] = {"Auto bot", "Record macro", "Replay macro"};
 static char const* kModesShort[3] = {"Auto", "Record", "Replay"};
@@ -27,6 +35,7 @@ static std::vector<Page> const& pages() {
 	static std::vector<Page> p = {
 		{"Player", {
 			{0, "Noclip", "noclip", 0, 0, 0},
+			{0, "Hazard noclip", "hazard-noclip", 0, 0, 0},
 			{0, "Jump hack", "jumphack", 0, 0, 0},
 			{0, "Autoclick", "autoclick", 0, 0, 0},
 			{1, "Auto CPS", "cps", 1, 30, 1},
@@ -35,9 +44,13 @@ static std::vector<Page> const& pages() {
 			{0, "Bot on", "enabled", 0, 0, 0},
 			{3, "Mode", "mode", 0, 0, 0},
 			{1, "Mistakes", "legit", 0, 10, 1},
+			{0, "Bot: cube", "bot-cube", 0, 0, 0},
+			{0, "Bot: wave", "bot-wave", 0, 0, 0},
 		}},
 		{"Global", {
 			{2, "Speed", "speed", 0.1, 5.0, 0.1},
+			{0, "Slow-mo Shift", "slowmo-key", 0, 0, 0},
+			{2, "Slow spd", "slowmo", 0.1, 1.0, 0.1},
 			{0, "Safe mode", "safe-mode", 0, 0, 0},
 			{0, "Indicator", "indicator", 0, 0, 0},
 			{0, "Restart R", "restart-key", 0, 0, 0},
@@ -46,10 +59,12 @@ static std::vector<Page> const& pages() {
 		{"Icons", {
 			{0, "Icon hack", "icon-hack", 0, 0, 0},
 			{0, "Rainbow", "rainbow-icon", 0, 0, 0},
-			{1, "Rainb. spd", "rainbow-speed", 1, 10, 1},
+			{1, "Rainb spd", "rainbow-speed", 1, 10, 1},
+			{1, "Opacity", "player-opacity", 1, 10, 1},
 			{0, "Hide player", "hide-player", 0, 0, 0},
 		}},
 		{"Wave", {
+			{0, "Wave noclip", "wave-noclip", 0, 0, 0},
 			{0, "Hide wave", "hide-wave", 0, 0, 0},
 			{0, "Solid wave", "solid-wave", 0, 0, 0},
 		}},
@@ -57,35 +72,51 @@ static std::vector<Page> const& pages() {
 			{1, "Snow", "fx-snow", 0, 10, 1},
 			{1, "Rain", "fx-rain", 0, 10, 1},
 			{1, "Fireflies", "fx-fireflies", 0, 10, 1},
+			{1, "Petals", "fx-petals", 0, 10, 1},
+			{1, "Stars", "fx-stars", 0, 10, 1},
+			{1, "Wind", "fx-wind", -10, 10, 1},
 		}},
 		{"Screen", {
 			{2, "Stretch X", "fx-stretch-x", 0.3, 3.0, 0.1},
 			{2, "Stretch Y", "fx-stretch-y", 0.3, 3.0, 0.1},
 			{2, "Zoom", "fx-zoom", 0.3, 3.0, 0.1},
 			{1, "Tilt", "fx-tilt", -45, 45, 5},
+			{1, "Skew X", "fx-skew", -45, 45, 5},
 			{0, "Mirror", "fx-mirror", 0, 0, 0},
 		}},
 		{"Fun", {
 			{1, "Rainbow", "fx-tint", 0, 10, 1},
 			{1, "Vignette", "fx-vignette", 0, 10, 1},
+			{1, "Scanlines", "fx-scanlines", 0, 10, 1},
+			{1, "Letterbox", "fx-letterbox", 0, 10, 1},
 			{1, "Wobble", "fx-wobble", 0, 10, 1},
 			{1, "Shake", "fx-shake", 0, 10, 1},
 			{1, "Pulse", "fx-pulse", 0, 10, 1},
+		}},
+		{"Tools", {
+			{0, "Hitboxes", "hitboxes", 0, 0, 0},
+			{0, "Layout mode", "layout-mode", 0, 0, 0},
+			{1, "Path trail", "path-trail", 0, 10, 1},
+			{0, "StartPos Q/E", "startpos-switch", 0, 0, 0},
+			{0, "Frame step", "frame-step", 0, 0, 0},
 		}},
 		{"Extra", {
 			{0, "Flip screen", "fx-flip", 0, 0, 0},
 			{1, "Spin", "fx-spin", 0, 10, 1},
 			{0, "Show clock", "show-clock", 0, 0, 0},
+			{0, "Attempt time", "show-time", 0, 0, 0},
 			{4, "Reset FX", "", 0, 0, 0},
+			{5, "Reset cheats", "", 0, 0, 0},
 		}},
 	};
 	return p;
 }
 
-// kind 4: кнопка "сбросить все эффекты"
+// kind 4: сбросить все эффекты; kind 5: выключить все читы
 static void resetFx() {
 	auto m = Mod::get();
-	for (char const* k : {"fx-snow", "fx-rain", "fx-fireflies", "fx-tilt", "fx-tint", "fx-vignette",
+	for (char const* k : {"fx-snow", "fx-rain", "fx-fireflies", "fx-petals", "fx-stars", "fx-wind",
+		"fx-tilt", "fx-skew", "fx-tint", "fx-vignette", "fx-scanlines", "fx-letterbox",
 		"fx-wobble", "fx-shake", "fx-pulse", "fx-spin"}) {
 		m->setSettingValue<int64_t>(k, 0);
 	}
@@ -94,6 +125,15 @@ static void resetFx() {
 	}
 	m->setSettingValue<bool>("fx-mirror", false);
 	m->setSettingValue<bool>("fx-flip", false);
+}
+
+static void resetCheats() {
+	auto m = Mod::get();
+	for (char const* k : {"noclip", "hazard-noclip", "wave-noclip", "jumphack", "autoclick", "enabled",
+		"slowmo-key", "startpos-switch", "frame-step"}) {
+		m->setSettingValue<bool>(k, false);
+	}
+	m->setSettingValue<double>("speed", 1.0);
 }
 
 static std::string valueText(Row const& r) {
@@ -280,7 +320,7 @@ private:
 				label->setPosition(ccp(4.f, cy));
 				pn.node->addChild(label);
 
-				if (ru.row->kind == 4) {
+				if (ru.row->kind >= 4) {
 					label->setColor(ccc3(238, 74, 156));
 				} else if (ru.row->kind == 0) {
 					auto box = CCLayerColor::create(ccc4(90, 90, 100, 255), 8.f, 8.f);
@@ -340,8 +380,9 @@ private:
 		auto mod = Mod::get();
 		auto const& r = *ru.row;
 
-		if (r.kind == 4) {
-			resetFx();
+		if (r.kind >= 4) {
+			if (r.kind == 4) resetFx();
+			else resetCheats();
 			this->refreshAll();
 			return;
 		}
@@ -390,10 +431,35 @@ class $modify(MenuScheduler, CCScheduler) {
 		}
 		prevTab = now;
 
+		// покадровый режим: F - пауза/пуск, G - один шаг
+		static bool prevF = false, prevG = false;
+		if (PlayLayer::get() && Mod::get()->getSettingValue<bool>("frame-step")) {
+			bool f = letterKeyDown('F');
+			bool g = letterKeyDown('G');
+			if (f && !prevF) g_frozen = !g_frozen;
+			if (g && !prevG) g_stepReq = true;
+			prevF = f;
+			prevG = g;
+			if (g_frozen) {
+				if (g_stepReq) {
+					dt = 1.f / 240.f + 0.00001f;
+					g_stepReq = false;
+				} else {
+					dt = 0.f;
+				}
+			}
+		} else {
+			g_frozen = false;
+			g_stepReq = false;
+		}
+
 		// speedhack только внутри уровня
-		if (PlayLayer::get()) {
+		if (PlayLayer::get() && !g_frozen) {
 			double sp = Mod::get()->getSettingValue<double>("speed");
 			if (std::abs(sp - 1.0) > 0.001) dt *= static_cast<float>(sp);
+			if (Mod::get()->getSettingValue<bool>("slowmo-key") && shiftKeyDown()) {
+				dt *= static_cast<float>(Mod::get()->getSettingValue<double>("slowmo"));
+			}
 		}
 		CCScheduler::update(dt);
 	}
