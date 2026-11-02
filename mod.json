@@ -6,9 +6,9 @@
 	},
 	"id": "user.autojump",
 	"name": "Mod Menu",
-	"version": "v2.2.0",
+	"version": "v2.3.0",
 	"developer": "user",
-	"description": "Menu on Tab: cheats, auto bot, macros and lots of visual effects (snow, rain, stretch, tilt...).",
+	"description": "Menu on Tab: cheats, auto bot, macros, icon hack, rainbow icon, FPS/clock, visual effects.",
 	"settings": {
 		"enabled": {
 			"type": "bool",
@@ -172,6 +172,56 @@
 		"fx-pulse": {
 			"type": "int",
 			"name": "Pulse",
+			"default": 0,
+			"min": 0,
+			"max": 10
+		},
+		"icon-hack": {
+			"type": "bool",
+			"name": "Icon hack",
+			"description": "All icons and colors count as unlocked.",
+			"default": false
+		},
+		"rainbow-icon": {
+			"type": "bool",
+			"name": "Rainbow icon",
+			"default": false
+		},
+		"rainbow-speed": {
+			"type": "int",
+			"name": "Rainbow speed",
+			"default": 5,
+			"min": 1,
+			"max": 10
+		},
+		"restart-key": {
+			"type": "bool",
+			"name": "Restart on R",
+			"default": false
+		},
+		"show-fps": {
+			"type": "bool",
+			"name": "Show FPS",
+			"default": false
+		},
+		"show-clock": {
+			"type": "bool",
+			"name": "Show clock",
+			"default": false
+		},
+		"fx-mirror": {
+			"type": "bool",
+			"name": "Mirror screen",
+			"default": false
+		},
+		"fx-flip": {
+			"type": "bool",
+			"name": "Flip screen",
+			"default": false
+		},
+		"fx-spin": {
+			"type": "int",
+			"name": "Spin screen",
 			"default": 0,
 			"min": 0,
 			"max": 10
