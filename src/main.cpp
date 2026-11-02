@@ -727,7 +727,11 @@ class $modify(BotPlayLayer, PlayLayer) {
 		m_uiLayer->addChild(info);
 		m_fields->infoLabel = info;
 
-		if (auto fx = createFxLayer()) m_uiLayer->addChild(fx, 90);
+		if (auto fx = createFxLayer()) {
+			// в сцену (рядом с игрой), чтобы повороты экрана не крутили снег и виньетку
+			CCNode* host = this->getParent() ? this->getParent() : static_cast<CCNode*>(m_uiLayer);
+			host->addChild(fx, 90);
+		}
 	}
 
 	void update(float dt) {
