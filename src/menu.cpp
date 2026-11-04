@@ -4,6 +4,7 @@
 #include <cmath>
 #include <string>
 #include <utility>
+#include <chrono>
 #include <vector>
 
 using namespace geode::prelude;
@@ -150,7 +151,24 @@ static std::string valueText(Row const& r) {
 	}
 }
 
-// ---------------- меню в стиле Mega Hack: окошки-панели ----------------
+// ---------------- меню: панели с анимацией ----------------
+namespace ui {
+	static ccColor3B const kAccent = {236, 72, 153};
+	static ccColor3B const kText = {208, 210, 222};
+	static ccColor3B const kTrackOff = {64, 66, 80};
+
+	static float easeOut(float t) {
+		t = std::clamp(t, 0.f, 1.f);
+		float u = 1.f - t;
+		return 1.f - u * u * u;
+	}
+
+	static ccColor3B lerpColor(ccColor3B a, ccColor3B b, float t) {
+		auto f = [&](GLubyte x, GLubyte y) { return static_cast<GLubyte>(x + (y - x) * t); };
+		return ccc3(f(a.r, b.r), f(a.g, b.g), f(a.b, b.b));
+	}
+}
+
 class HackOverlay : public CCLayer {
 public:
 	static inline HackOverlay* s_open = nullptr;
@@ -169,8 +187,9 @@ public:
 		if (s_open == this) s_open = nullptr;
 	}
 
-	void closeMenu() {
-		this->removeFromParentAndCleanup(true);
+	// Tab: открыть / закрыть (с анимацией)
+	void toggleMenu() {
+		m_closing = !m_closing;
 	}
 
 	void registerWithTouchDispatcher() override {
@@ -182,64 +201,126 @@ public:
 		for (int i = static_cast<int>(m_panels.size()) - 1; i >= 0; --i) {
 			auto& pn = m_panels[i];
 			float lx = p.x - pn.node->getPositionX();
-			float ly = p.y - pn.node->getPositionY();
-			if (lx < 0.f || ly < 0.f || lx > pn.w || ly > pn.h) continue;
-			if (ly > pn.h - kHeader) {
+			float ly = pn.node->getPositionY() - p.y; // вниз от верхнего края
+			if (lx < 0.f || lx > pn.w || ly < 0.f || ly > pn.curH) continue;
+
+			if (ly < kHeader) {
 				m_drag = i;
 				m_dragOff = ccp(lx, ly);
+				m_dragStart = p;
+				m_dragMoved = false;
 				this->reorderChild(pn.node, ++m_topZ);
 				return true;
 			}
-			for (auto& ru : pn.rows) {
-				if (ly >= ru.yBottom && ly < ru.yBottom + kRow) {
-					this->clickRow(ru, lx, pn.w);
-					break;
-				}
+			if (pn.collapse > 0.5f) return true;
+
+			int ri = static_cast<int>((ly - kHeader) / kRow);
+			if (ri >= 0 && ri < static_cast<int>(pn.rows.size())) {
+				this->pressRow(i, ri, lx);
 			}
 			return true;
 		}
-		return true; // всё остальное проглатываем, чтобы клики не уходили в игру
+		return true; // остальное проглатываем, чтобы клики не уходили в игру
 	}
 
 	void ccTouchMoved(CCTouch* touch, CCEvent*) override {
-		if (m_drag < 0) return;
-		auto win = CCDirector::get()->getWinSize();
-		auto& pn = m_panels[m_drag];
 		CCPoint p = this->convertTouchToNodeSpace(touch);
-		float x = std::clamp(p.x - m_dragOff.x, 0.f, win.width - pn.w);
-		float y = std::clamp(p.y - m_dragOff.y, 0.f, win.height - pn.h);
-		pn.node->setPosition(ccp(x, y));
+		auto win = CCDirector::get()->getWinSize();
+
+		if (m_sliderPanel >= 0) {
+			auto& pn = m_panels[m_sliderPanel];
+			float lx = p.x - pn.node->getPositionX();
+			this->setFromNorm(pn.rows[m_sliderRow], (lx - pn.trackX) / kTrackW);
+			return;
+		}
+		if (m_drag < 0) return;
+		auto& pn = m_panels[m_drag];
+		if (std::abs(p.x - m_dragStart.x) + std::abs(p.y - m_dragStart.y) > 4.f) m_dragMoved = true;
+		if (!m_dragMoved) return;
+		pn.x = std::clamp(p.x - m_dragOff.x, 0.f, win.width - pn.w);
+		pn.topY = std::clamp(p.y + m_dragOff.y, pn.curH, win.height);
 	}
 
 	void ccTouchEnded(CCTouch*, CCEvent*) override {
-		this->finishDrag();
+		this->finishTouch();
 	}
 
 	void ccTouchCancelled(CCTouch*, CCEvent*) override {
-		this->finishDrag();
+		this->finishTouch();
+	}
+
+	void update(float) override {
+		auto now = std::chrono::steady_clock::now();
+		float dt = std::chrono::duration<float>(now - m_last).count();
+		m_last = now;
+		dt = std::min(dt, 0.05f);
+
+		float maxT = 0.45f + m_panels.size() * 0.045f;
+		m_time = std::min(m_time + (m_closing ? -dt * 1.6f : dt), maxT);
+		if (m_closing && m_time <= 0.f) {
+			this->unscheduleUpdate();
+			this->removeFromParentAndCleanup(true);
+			return;
+		}
+		m_shimmerT += dt;
+		m_dim->setOpacity(static_cast<GLubyte>(90.f * std::clamp(m_time * 4.f, 0.f, 1.f)));
+
+		CCPoint mouse = this->convertToNodeSpace(geode::cocos::getMousePos());
+		for (int i = 0; i < static_cast<int>(m_panels.size()); ++i) {
+			this->animatePanel(m_panels[i], i, dt, mouse);
+		}
 	}
 
 private:
-	static constexpr float kPanelW = 84.f;
-	static constexpr float kHeader = 15.f;
-	static constexpr float kRow = 13.f;
+	static constexpr float kPanelW = 104.f;
+	static constexpr float kHeader = 16.f;
+	static constexpr float kRow = 14.f;
+	static constexpr float kTrackW = 32.f;
 
+	struct Fade {
+		CCRGBAProtocol* node;
+		GLubyte base;
+	};
 	struct RowUI {
 		Row const* row = nullptr;
-		CCLayerColor* check = nullptr;
+		CCLayerColor* hover = nullptr;
+		CCLayerColor* track = nullptr;
+		CCLayerColor* fill = nullptr;
+		CCLayerColor* knob = nullptr;
 		CCLabelBMFont* value = nullptr;
-		float yBottom = 0.f;
+		float anim = 0.f;
+		float hov = 0.f;
 	};
 	struct PanelUI {
 		CCNode* node = nullptr;
-		float w = 0.f, h = 0.f;
+		CCNode* rowsNode = nullptr;
+		CCLayerColor* body = nullptr;
+		CCLayerColor* shadow = nullptr;
+		CCLayerColor* shimmer = nullptr;
+		CCLabelBMFont* chevron = nullptr;
+		std::vector<Fade> fades;     // шапка, фон
+		std::vector<Fade> rowFades;  // содержимое строк
 		std::vector<RowUI> rows;
+		float w = kPanelW, bodyH = 0.f, curH = 0.f;
+		float x = 0.f, topY = 0.f;
+		float trackX = 0.f;
+		float collapse = 0.f, collapseT = 0.f;
+		float lastA = -1.f, lastRowA = -1.f;
 	};
 
 	std::vector<PanelUI> m_panels;
+	CCLayerColor* m_dim = nullptr;
+	std::chrono::steady_clock::time_point m_last = std::chrono::steady_clock::now();
+	float m_time = 0.f;
+	float m_shimmerT = 0.f;
+	bool m_closing = false;
 	int m_drag = -1;
 	CCPoint m_dragOff = ccp(0, 0);
+	CCPoint m_dragStart = ccp(0, 0);
+	bool m_dragMoved = false;
 	int m_topZ = 10;
+	int m_sliderPanel = -1;
+	int m_sliderRow = -1;
 
 	bool initOverlay() {
 		if (!CCLayer::init()) return false;
@@ -247,8 +328,8 @@ private:
 		s_open = this;
 
 		auto win = CCDirector::get()->getWinSize();
-		auto dim = CCLayerColor::create(ccc4(0, 0, 0, 70), win.width, win.height);
-		this->addChild(dim);
+		m_dim = CCLayerColor::create(ccc4(0, 0, 0, 0), win.width, win.height);
+		this->addChild(m_dim);
 
 		auto const& pg = pages();
 		int n = static_cast<int>(pg.size());
@@ -256,127 +337,226 @@ private:
 		int perRow = std::max(1, static_cast<int>((win.width - 12.f + gap) / (kPanelW + gap)));
 		auto mod = Mod::get();
 
-		auto heightOf = [&](int idx) {
-			return kHeader + static_cast<float>(pg[idx].second.size()) * kRow + 3.f;
+		auto fullHeight = [&](int idx) {
+			return kHeader + static_cast<float>(pg[idx].second.size()) * kRow + 4.f;
 		};
 		std::vector<float> rowTop;
-		float top = win.height - 30.f;
+		float top = win.height - 26.f;
 		for (int r = 0; r * perRow < n; ++r) {
 			rowTop.push_back(top);
 			float mh = 0.f;
-			for (int c = 0; c < perRow && r * perRow + c < n; ++c) mh = std::max(mh, heightOf(r * perRow + c));
-			top -= mh + 6.f;
+			for (int c = 0; c < perRow && r * perRow + c < n; ++c) mh = std::max(mh, fullHeight(r * perRow + c));
+			top -= mh + 8.f;
 		}
 
 		for (int p = 0; p < n; ++p) {
 			PanelUI pn;
 			int rows = static_cast<int>(pg[p].second.size());
-			pn.w = kPanelW;
-			pn.h = heightOf(p);
+			pn.bodyH = rows * kRow + 4.f;
+			pn.curH = kHeader + pn.bodyH;
+			pn.trackX = kPanelW - 64.f;
 
 			int r = p / perRow;
 			int c = p % perRow;
 			int cnt = std::min(perRow, n - r * perRow);
 			float x0 = (win.width - (cnt * kPanelW + (cnt - 1) * gap)) / 2.f;
 			float defX = x0 + c * (kPanelW + gap);
-			float defY = rowTop[r] - pn.h;
-			float px = static_cast<float>(mod->getSavedValue<double>(fmt::format("pnl2-x-{}", p), defX));
-			float py = static_cast<float>(mod->getSavedValue<double>(fmt::format("pnl2-y-{}", p), defY));
-			px = std::clamp(px, 0.f, win.width - pn.w);
-			py = std::clamp(py, 0.f, win.height - pn.h);
+			float defTop = rowTop[r];
+			pn.x = std::clamp(static_cast<float>(mod->getSavedValue<double>(fmt::format("pnl3-x-{}", p), defX)), 0.f, win.width - pn.w);
+			pn.topY = std::clamp(static_cast<float>(mod->getSavedValue<double>(fmt::format("pnl3-y-{}", p), defTop)), pn.curH, win.height);
+			pn.collapseT = mod->getSavedValue<bool>(fmt::format("pnl3-c-{}", p), false) ? 1.f : 0.f;
+			pn.collapse = pn.collapseT;
 
 			pn.node = CCNode::create();
-			pn.node->setPosition(ccp(px, py));
 			this->addChild(pn.node, p);
 
-			auto body = CCLayerColor::create(ccc4(22, 22, 26, 238), pn.w, pn.h);
-			pn.node->addChild(body);
+			// тень, фон, шапка (всё привязано к верхнему левому углу)
+			pn.shadow = CCLayerColor::create(ccc4(0, 0, 0, 70), pn.w + 3.f, pn.curH + 3.f);
+			pn.node->addChild(pn.shadow);
+			pn.fades.push_back({pn.shadow, 70});
 
-			auto head = CCLayerGradient::create(ccc4(238, 74, 156, 255), ccc4(168, 36, 104, 255), ccp(0, -1));
-			head->setContentSize(CCSize(pn.w, kHeader));
-			head->setPosition(ccp(0.f, pn.h - kHeader));
+			pn.body = CCLayerColor::create(ccc4(19, 20, 27, 238), pn.w, pn.bodyH);
+			pn.node->addChild(pn.body);
+			pn.fades.push_back({pn.body, 238});
+
+			auto head = CCLayerColor::create(ccc4(30, 31, 43, 250), pn.w, kHeader);
+			head->setPosition(ccp(0.f, -kHeader));
 			pn.node->addChild(head);
+			pn.fades.push_back({head, 250});
+
+			auto line = CCLayerColor::create(ccc4(236, 72, 153, 255), pn.w, 1.5f);
+			line->setPosition(ccp(0.f, -kHeader));
+			pn.node->addChild(line);
+			pn.fades.push_back({line, 255});
+
+			pn.shimmer = CCLayerColor::create(ccc4(255, 255, 255, 14), 14.f, kHeader - 1.5f);
+			pn.shimmer->setPosition(ccp(0.f, -kHeader + 1.5f));
+			pn.node->addChild(pn.shimmer);
+			pn.fades.push_back({pn.shimmer, 14});
 
 			auto title = CCLabelBMFont::create(pg[p].first, "bigFont.fnt");
 			title->setScale(0.3f);
-			title->setPosition(ccp(pn.w / 2.f, pn.h - kHeader / 2.f));
+			title->setAnchorPoint(ccp(0.f, 0.5f));
+			title->setPosition(ccp(7.f, -kHeader / 2.f));
 			pn.node->addChild(title);
+			pn.fades.push_back({title, 255});
+
+			pn.chevron = CCLabelBMFont::create(pn.collapseT > 0.5f ? "+" : "-", "chatFont.fnt");
+			pn.chevron->setScale(0.55f);
+			pn.chevron->setColor(ui::kAccent);
+			pn.chevron->setPosition(ccp(pn.w - 8.f, -kHeader / 2.f));
+			pn.node->addChild(pn.chevron);
+			pn.fades.push_back({pn.chevron, 255});
+
+			pn.rowsNode = CCNode::create();
+			pn.node->addChild(pn.rowsNode);
 
 			for (int i = 0; i < rows; ++i) {
 				RowUI ru;
 				ru.row = &pg[p].second[i];
-				ru.yBottom = pn.h - kHeader - (i + 1) * kRow;
+				float rowTopY = -kHeader - i * kRow;
+				float cy = rowTopY - kRow / 2.f;
+				auto const& rw = *ru.row;
 
-				if (i % 2 == 1) {
-					auto stripe = CCLayerColor::create(ccc4(255, 255, 255, 12), pn.w, kRow);
-					stripe->setPosition(ccp(0.f, ru.yBottom));
-					pn.node->addChild(stripe);
-				}
+				ru.hover = CCLayerColor::create(ccc4(255, 255, 255, 0), pn.w, kRow);
+				ru.hover->setPosition(ccp(0.f, rowTopY - kRow));
+				pn.rowsNode->addChild(ru.hover);
 
-				float cy = ru.yBottom + kRow / 2.f;
-				auto label = CCLabelBMFont::create(ru.row->label, "chatFont.fnt");
-				label->setScale(0.38f);
-				label->setAnchorPoint(ccp(0.f, 0.5f));
-				label->setPosition(ccp(4.f, cy));
-				pn.node->addChild(label);
-
-				if (ru.row->kind >= 4) {
-					label->setColor(ccc3(238, 74, 156));
-				} else if (ru.row->kind == 0) {
-					auto box = CCLayerColor::create(ccc4(90, 90, 100, 255), 8.f, 8.f);
-					box->setPosition(ccp(pn.w - 12.f, cy - 4.f));
-					pn.node->addChild(box);
-					auto inner = CCLayerColor::create(ccc4(238, 74, 156, 255), 6.f, 6.f);
-					inner->setPosition(ccp(pn.w - 11.f, cy - 3.f));
-					inner->setVisible(mod->getSettingValue<bool>(ru.row->key));
-					pn.node->addChild(inner);
-					ru.check = inner;
+				auto label = CCLabelBMFont::create(rw.label, "chatFont.fnt");
+				label->setScale(0.4f);
+				label->setColor(rw.kind >= 4 ? ui::kAccent : ui::kText);
+				if (rw.kind >= 4) {
+					label->setPosition(ccp(pn.w / 2.f, cy));
 				} else {
-					auto minus = CCLabelBMFont::create("<", "chatFont.fnt");
-					minus->setScale(0.45f);
-					minus->setPosition(ccp(pn.w - 38.f, cy));
-					minus->setColor(ccc3(238, 74, 156));
-					pn.node->addChild(minus);
+					label->setAnchorPoint(ccp(0.f, 0.5f));
+					label->setPosition(ccp(7.f, cy));
+				}
+				pn.rowsNode->addChild(label);
+				pn.rowFades.push_back({label, 255});
 
-					auto plus = CCLabelBMFont::create(">", "chatFont.fnt");
-					plus->setScale(0.45f);
-					plus->setPosition(ccp(pn.w - 6.f, cy));
-					plus->setColor(ccc3(238, 74, 156));
-					pn.node->addChild(plus);
+				if (rw.kind == 0) {
+					ru.track = CCLayerColor::create(ccc4(64, 66, 80, 255), 16.f, 8.f);
+					ru.track->setPosition(ccp(pn.w - 25.f, cy - 4.f));
+					pn.rowsNode->addChild(ru.track);
+					pn.rowFades.push_back({ru.track, 255});
 
-					auto val = CCLabelBMFont::create(valueText(*ru.row).c_str(), "chatFont.fnt");
-					val->setScale(0.38f);
-					val->setPosition(ccp(pn.w - 22.f, cy));
-					pn.node->addChild(val);
-					ru.value = val;
+					ru.knob = CCLayerColor::create(ccc4(240, 241, 247, 255), 6.f, 6.f);
+					ru.knob->setPosition(ccp(pn.w - 24.f, cy - 3.f));
+					pn.rowsNode->addChild(ru.knob);
+					pn.rowFades.push_back({ru.knob, 255});
+
+					ru.anim = mod->getSettingValue<bool>(rw.key) ? 1.f : 0.f;
+				} else if (rw.kind == 1 || rw.kind == 2) {
+					ru.track = CCLayerColor::create(ccc4(64, 66, 80, 255), kTrackW, 3.f);
+					ru.track->setPosition(ccp(pn.trackX, cy - 1.5f));
+					pn.rowsNode->addChild(ru.track);
+					pn.rowFades.push_back({ru.track, 255});
+
+					ru.fill = CCLayerColor::create(ccc4(236, 72, 153, 255), 1.f, 3.f);
+					ru.fill->setPosition(ccp(pn.trackX, cy - 1.5f));
+					pn.rowsNode->addChild(ru.fill);
+					pn.rowFades.push_back({ru.fill, 255});
+
+					ru.knob = CCLayerColor::create(ccc4(240, 241, 247, 255), 3.f, 8.f);
+					ru.knob->setPosition(ccp(pn.trackX, cy - 4.f));
+					pn.rowsNode->addChild(ru.knob);
+					pn.rowFades.push_back({ru.knob, 255});
+
+					ru.anim = this->normOf(rw);
+
+					ru.value = CCLabelBMFont::create(valueText(rw).c_str(), "chatFont.fnt");
+					ru.value->setScale(0.38f);
+					ru.value->setAnchorPoint(ccp(1.f, 0.5f));
+					ru.value->setPosition(ccp(pn.w - 6.f, cy));
+					pn.rowsNode->addChild(ru.value);
+					pn.rowFades.push_back({ru.value, 255});
+				} else if (rw.kind == 3) {
+					ru.value = CCLabelBMFont::create(valueText(rw).c_str(), "chatFont.fnt");
+					ru.value->setScale(0.4f);
+					ru.value->setColor(ui::kAccent);
+					ru.value->setAnchorPoint(ccp(1.f, 0.5f));
+					ru.value->setPosition(ccp(pn.w - 6.f, cy));
+					pn.rowsNode->addChild(ru.value);
+					pn.rowFades.push_back({ru.value, 255});
 				}
 				pn.rows.push_back(ru);
 			}
 			m_panels.push_back(std::move(pn));
 		}
+
+		for (int i = 0; i < n; ++i) this->animatePanel(m_panels[i], i, 0.f, ccp(-999.f, -999.f));
+		this->scheduleUpdate();
 		return true;
 	}
 
-	void refreshAll() {
+	float normOf(Row const& r) {
 		auto mod = Mod::get();
-		for (auto& pn : m_panels) {
-			for (auto& ru : pn.rows) {
-				if (ru.row->kind == 0 && ru.check) ru.check->setVisible(mod->getSettingValue<bool>(ru.row->key));
-				else if (ru.value) ru.value->setString(valueText(*ru.row).c_str());
+		double v = (r.kind == 1) ? static_cast<double>(mod->getSettingValue<int64_t>(r.key))
+		                         : mod->getSettingValue<double>(r.key);
+		return static_cast<float>(std::clamp((v - r.mn) / (r.mx - r.mn), 0.0, 1.0));
+	}
+
+	void animatePanel(PanelUI& pn, int idx, float dt, CCPoint mouse) {
+		float a = ui::easeOut((m_time - idx * 0.045f) / 0.28f);
+		float k = std::min(1.f, dt * 16.f);
+
+		pn.collapse += (pn.collapseT - pn.collapse) * k;
+		if (std::abs(pn.collapse - pn.collapseT) < 0.002f) pn.collapse = pn.collapseT;
+		pn.curH = kHeader + pn.bodyH * (1.f - pn.collapse);
+
+		pn.node->setPosition(ccp(pn.x, pn.topY + (1.f - a) * 16.f));
+		pn.node->setVisible(a > 0.001f);
+		pn.body->changeHeight(std::max(0.f, pn.curH - kHeader));
+		pn.body->setPosition(ccp(0.f, -pn.curH));
+		pn.shadow->changeHeight(pn.curH + 3.f);
+		pn.shadow->setPosition(ccp(-1.5f, -pn.curH - 1.5f));
+		pn.rowsNode->setVisible(pn.collapse < 0.98f);
+
+		float rowA = std::clamp(1.f - pn.collapse * 1.8f, 0.f, 1.f);
+		if (std::abs(a - pn.lastA) > 0.002f || std::abs(rowA - pn.lastRowA) > 0.002f) {
+			pn.lastA = a;
+			pn.lastRowA = rowA;
+			for (auto& f : pn.fades) f.node->setOpacity(static_cast<GLubyte>(f.base * a));
+			for (auto& f : pn.rowFades) f.node->setOpacity(static_cast<GLubyte>(f.base * a * rowA));
+		}
+
+		// блик, бегущий по шапке
+		float sx = std::fmod(m_shimmerT * 38.f + idx * 29.f, pn.w + 90.f) - 14.f;
+		pn.shimmer->setVisible(sx >= 0.f && sx <= pn.w - 14.f);
+		pn.shimmer->setPositionX(sx);
+
+		if (pn.collapse >= 0.98f || dt <= 0.f) return;
+
+		float top = pn.node->getPositionY();
+		float lx = mouse.x - pn.x;
+		auto mod = Mod::get();
+		for (int i = 0; i < static_cast<int>(pn.rows.size()); ++i) {
+			auto& ru = pn.rows[i];
+			float rowTopY = top - kHeader - i * kRow;
+			bool inside = lx >= 0.f && lx <= pn.w && mouse.y <= rowTopY && mouse.y > rowTopY - kRow && m_sliderPanel < 0 && m_drag < 0;
+			ru.hov += ((inside ? 1.f : 0.f) - ru.hov) * k;
+			ru.hover->setOpacity(static_cast<GLubyte>(24.f * ru.hov * a * rowA));
+
+			auto const& r = *ru.row;
+			if (r.kind == 0) {
+				float tgt = mod->getSettingValue<bool>(r.key) ? 1.f : 0.f;
+				ru.anim += (tgt - ru.anim) * k;
+				float cy = -kHeader - i * kRow - kRow / 2.f;
+				ru.knob->setPosition(ccp(pn.w - 24.f + ru.anim * 8.f, cy - 3.f));
+				ru.track->setColor(ui::lerpColor(ui::kTrackOff, ui::kAccent, ru.anim));
+			} else if (r.kind == 1 || r.kind == 2) {
+				float tgt = this->normOf(r);
+				ru.anim += (tgt - ru.anim) * k;
+				float cy = -kHeader - i * kRow - kRow / 2.f;
+				ru.fill->changeWidth(std::max(1.f, ru.anim * kTrackW));
+				ru.knob->setPosition(ccp(pn.trackX + ru.anim * (kTrackW - 3.f), cy - 4.f));
 			}
 		}
 	}
 
-	void finishDrag() {
-		if (m_drag < 0) return;
-		auto mod = Mod::get();
-		auto& pn = m_panels[m_drag];
-		mod->setSavedValue<double>(fmt::format("pnl2-x-{}", m_drag), pn.node->getPositionX());
-		mod->setSavedValue<double>(fmt::format("pnl2-y-{}", m_drag), pn.node->getPositionY());
-		m_drag = -1;
-	}
-
-	void clickRow(RowUI& ru, float lx, float w) {
+	void pressRow(int pi, int ri, float lx) {
+		auto& pn = m_panels[pi];
+		auto& ru = pn.rows[ri];
 		auto mod = Mod::get();
 		auto const& r = *ru.row;
 
@@ -386,35 +566,65 @@ private:
 			this->refreshAll();
 			return;
 		}
-
 		if (r.kind == 0) {
-			bool v = !mod->getSettingValue<bool>(r.key);
-			mod->setSettingValue<bool>(r.key, v);
-			ru.check->setVisible(v);
+			mod->setSettingValue<bool>(r.key, !mod->getSettingValue<bool>(r.key));
 			return;
 		}
-
-		int dir = 0;
-		if (lx >= w - 46.f && lx < w - 30.f) dir = -1;
-		else if (lx >= w - 14.f) dir = 1;
-		if (dir == 0) return;
-
-		if (r.kind == 1) {
-			int64_t v = mod->getSettingValue<int64_t>(r.key) + dir * static_cast<int64_t>(r.st);
-			v = std::clamp<int64_t>(v, static_cast<int64_t>(r.mn), static_cast<int64_t>(r.mx));
-			mod->setSettingValue<int64_t>(r.key, v);
-		} else if (r.kind == 2) {
-			double v = mod->getSettingValue<double>(r.key) + dir * r.st;
-			v = std::clamp(std::round(v * 10.0) / 10.0, r.mn, r.mx);
-			mod->setSettingValue<double>(r.key, v);
-		} else if (r.kind == 3) {
+		if (r.kind == 3) {
 			std::string cur = mod->getSettingValue<std::string>(r.key);
 			int idx = 0;
 			for (int k = 0; k < 3; ++k) if (cur == kModes[k]) idx = k;
-			idx = (idx + (dir == 1 ? 1 : 2)) % 3;
-			mod->setSettingValue<std::string>(r.key, kModes[idx]);
+			mod->setSettingValue<std::string>(r.key, kModes[(idx + 1) % 3]);
+			ru.value->setString(valueText(r).c_str());
+			return;
+		}
+		// ползунок
+		if (lx >= pn.trackX - 8.f) {
+			m_sliderPanel = pi;
+			m_sliderRow = ri;
+			this->setFromNorm(ru, (lx - pn.trackX) / kTrackW);
+		}
+	}
+
+	void setFromNorm(RowUI& ru, float n) {
+		auto mod = Mod::get();
+		auto const& r = *ru.row;
+		n = std::clamp(n, 0.f, 1.f);
+		double v = r.mn + n * (r.mx - r.mn);
+		v = std::round((v - r.mn) / r.st) * r.st + r.mn;
+		v = std::clamp(v, r.mn, r.mx);
+		if (r.kind == 1) {
+			mod->setSettingValue<int64_t>(r.key, static_cast<int64_t>(std::llround(v)));
+		} else {
+			mod->setSettingValue<double>(r.key, std::round(v * 10.0) / 10.0);
 		}
 		ru.value->setString(valueText(r).c_str());
+	}
+
+	void refreshAll() {
+		for (auto& pn : m_panels) {
+			for (auto& ru : pn.rows) {
+				if (ru.value) ru.value->setString(valueText(*ru.row).c_str());
+			}
+		}
+	}
+
+	void finishTouch() {
+		auto mod = Mod::get();
+		if (m_drag >= 0) {
+			auto& pn = m_panels[m_drag];
+			if (!m_dragMoved) {
+				pn.collapseT = pn.collapseT > 0.5f ? 0.f : 1.f;
+				pn.chevron->setString(pn.collapseT > 0.5f ? "+" : "-");
+				mod->setSavedValue<bool>(fmt::format("pnl3-c-{}", m_drag), pn.collapseT > 0.5f);
+			} else {
+				mod->setSavedValue<double>(fmt::format("pnl3-x-{}", m_drag), pn.x);
+				mod->setSavedValue<double>(fmt::format("pnl3-y-{}", m_drag), pn.topY);
+			}
+		}
+		m_drag = -1;
+		m_sliderPanel = -1;
+		m_sliderRow = -1;
 	}
 };
 
@@ -424,7 +634,7 @@ class $modify(MenuScheduler, CCScheduler) {
 		bool now = tabKeyDown();
 		if (now && !prevTab) {
 			if (HackOverlay::s_open) {
-				HackOverlay::s_open->closeMenu();
+				HackOverlay::s_open->toggleMenu();
 			} else if (auto scene = CCDirector::get()->getRunningScene()) {
 				if (auto menu = HackOverlay::create()) scene->addChild(menu, 99999);
 			}
