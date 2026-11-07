@@ -5,6 +5,7 @@
 #include <string>
 #include <utility>
 #include <chrono>
+#include <Geode/ui/Notification.hpp>
 #include <vector>
 
 using namespace geode::prelude;
@@ -12,6 +13,7 @@ using namespace geode::prelude;
 bool tabKeyDown(); // keys.cpp
 bool shiftKeyDown(); // keys.cpp
 bool letterKeyDown(char c); // keys.cpp
+bool vkDown(int vk); // keys.cpp
 
 static bool g_frozen = false;
 static bool g_stepReq = false;
@@ -151,6 +153,53 @@ static std::string valueText(Row const& r) {
 	}
 }
 
+// ---------------- горячие клавиши ----------------
+struct Bind {
+	std::string key;
+	std::string label;
+	int vk;
+};
+static std::vector<Bind> g_binds;
+static bool g_bindsLoaded = false;
+
+static void ensureBinds() {
+	if (g_bindsLoaded) return;
+	g_bindsLoaded = true;
+	for (auto const& pg : pages()) {
+		for (auto const& r : pg.second) {
+			if (r.kind != 0) continue;
+			int vk = static_cast<int>(Mod::get()->getSavedValue<int64_t>(fmt::format("bind-{}", r.key), 0));
+			if (vk > 0) g_binds.push_back({r.key, r.label, vk});
+		}
+	}
+}
+
+static int bindOf(char const* key) {
+	ensureBinds();
+	for (auto const& b : g_binds) if (b.key == key) return b.vk;
+	return 0;
+}
+
+static void setBind(Row const& r, int vk) {
+	ensureBinds();
+	g_binds.erase(std::remove_if(g_binds.begin(), g_binds.end(),
+		[&](Bind const& b) { return b.key == r.key; }), g_binds.end());
+	if (vk > 0) g_binds.push_back({r.key, r.label, vk});
+	Mod::get()->setSavedValue<int64_t>(fmt::format("bind-{}", r.key), vk);
+}
+
+static std::string keyName(int vk) {
+	if ((vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9')) return std::string(1, static_cast<char>(vk));
+	if (vk >= 0x70 && vk <= 0x7B) return fmt::format("F{}", vk - 0x6F);
+	return "?";
+}
+
+static std::string rowLabel(Row const& r) {
+	if (r.kind != 0) return r.label;
+	int vk = bindOf(r.key);
+	return vk ? fmt::format("{} [{}]", r.label, keyName(vk)) : std::string(r.label);
+}
+
 // ---------------- меню: панели с анимацией ----------------
 namespace ui {
 	static ccColor3B const kAccent = {236, 72, 153};
@@ -269,6 +318,8 @@ public:
 		for (int i = 0; i < static_cast<int>(m_panels.size()); ++i) {
 			this->animatePanel(m_panels[i], i, dt, mouse);
 		}
+		m_hint->setOpacity(static_cast<GLubyte>(150.f * std::clamp(m_time * 3.f, 0.f, 1.f)));
+		this->handleBinding(mouse);
 	}
 
 private:
@@ -288,6 +339,7 @@ private:
 		CCLayerColor* fill = nullptr;
 		CCLayerColor* knob = nullptr;
 		CCLabelBMFont* value = nullptr;
+		CCLabelBMFont* label = nullptr;
 		float anim = 0.f;
 		float hov = 0.f;
 	};
@@ -321,6 +373,8 @@ private:
 	int m_topZ = 10;
 	int m_sliderPanel = -1;
 	int m_sliderRow = -1;
+	bool m_prevKey[256] = {};
+	CCLabelBMFont* m_hint = nullptr;
 
 	bool initOverlay() {
 		if (!CCLayer::init()) return false;
@@ -330,6 +384,12 @@ private:
 		auto win = CCDirector::get()->getWinSize();
 		m_dim = CCLayerColor::create(ccc4(0, 0, 0, 0), win.width, win.height);
 		this->addChild(m_dim);
+
+		m_hint = CCLabelBMFont::create("Hover a switch and press a key to bind it  |  Backspace clears", "chatFont.fnt");
+		m_hint->setScale(0.5f);
+		m_hint->setPosition(ccp(win.width / 2.f, 10.f));
+		m_hint->setOpacity(0);
+		this->addChild(m_hint, 100);
 
 		auto const& pg = pages();
 		int n = static_cast<int>(pg.size());
@@ -422,7 +482,8 @@ private:
 				ru.hover->setPosition(ccp(0.f, rowTopY - kRow));
 				pn.rowsNode->addChild(ru.hover);
 
-				auto label = CCLabelBMFont::create(rw.label, "chatFont.fnt");
+				auto label = CCLabelBMFont::create(rowLabel(rw).c_str(), "chatFont.fnt");
+				ru.label = label;
 				label->setScale(0.4f);
 				label->setColor(rw.kind >= 4 ? ui::kAccent : ui::kText);
 				if (rw.kind >= 4) {
@@ -487,6 +548,34 @@ private:
 		for (int i = 0; i < n; ++i) this->animatePanel(m_panels[i], i, 0.f, ccp(-999.f, -999.f));
 		this->scheduleUpdate();
 		return true;
+	}
+
+	// назначение клавиш: навёл на переключатель и нажал клавишу
+	void handleBinding(CCPoint mouse) {
+		RowUI* hov = nullptr;
+		for (auto& pn : m_panels) {
+			if (pn.collapse > 0.5f) continue;
+			float lx = mouse.x - pn.x;
+			float top = pn.node->getPositionY();
+			if (lx < 0.f || lx > pn.w) continue;
+			for (size_t i = 0; i < pn.rows.size(); ++i) {
+				float rt = top - kHeader - static_cast<float>(i) * kRow;
+				if (mouse.y <= rt && mouse.y > rt - kRow && pn.rows[i].row->kind == 0) hov = &pn.rows[i];
+			}
+		}
+		auto scan = [&](int vk) {
+			bool d = vkDown(vk);
+			if (d && !m_prevKey[vk] && hov && !m_closing) {
+				setBind(*hov->row, (vk == 0x08 || vk == 0x2E) ? 0 : vk);
+				hov->label->setString(rowLabel(*hov->row).c_str());
+			}
+			m_prevKey[vk] = d;
+		};
+		for (int vk = 'A'; vk <= 'Z'; ++vk) scan(vk);
+		for (int vk = '0'; vk <= '9'; ++vk) scan(vk);
+		for (int vk = 0x70; vk <= 0x7B; ++vk) scan(vk);
+		scan(0x08);
+		scan(0x2E);
 	}
 
 	float normOf(Row const& r) {
@@ -640,6 +729,23 @@ class $modify(MenuScheduler, CCScheduler) {
 			}
 		}
 		prevTab = now;
+
+		// горячие клавиши на переключатели (пока меню закрыто)
+		ensureBinds();
+		static bool prevB[256] = {};
+		bool nowB[256] = {};
+		for (auto const& b : g_binds) {
+			if (b.vk > 0 && b.vk < 256) nowB[b.vk] = !HackOverlay::s_open && vkDown(b.vk);
+		}
+		for (auto const& b : g_binds) {
+			if (b.vk > 0 && b.vk < 256 && nowB[b.vk] && !prevB[b.vk]) {
+				auto md = Mod::get();
+				bool v = !md->getSettingValue<bool>(b.key);
+				md->setSettingValue<bool>(b.key, v);
+				Notification::create(fmt::format("{}: {}", b.label, v ? "ON" : "OFF"), NotificationIcon::None, 1.f)->show();
+			}
+		}
+		for (int i = 0; i < 256; ++i) prevB[i] = nowB[i];
 
 		// покадровый режим: F - пауза/пуск, G - один шаг
 		static bool prevF = false, prevG = false;
