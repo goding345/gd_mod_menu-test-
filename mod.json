@@ -6,7 +6,7 @@
 	},
 	"id": "user.autojump",
 	"name": "Mod Menu",
-	"version": "v2.5.0",
+	"version": "v2.6.0",
 	"developer": "user",
 	"description": "Menu on Tab: cheats, auto bot, macros, icon hack, rainbow icon, FPS/clock, visual effects.",
 	"settings": {
@@ -338,6 +338,34 @@
 			"type": "bool",
 			"name": "Frame step (F freeze, G step)",
 			"default": false
+		},
+		"ui-accent": {
+			"type": "string",
+			"name": "Menu accent color",
+			"default": "Pink",
+			"one-of": [
+				"Pink",
+				"Blue",
+				"Green",
+				"Orange",
+				"Purple",
+				"Red",
+				"White"
+			]
+		},
+		"ui-opacity": {
+			"type": "int",
+			"name": "Menu opacity",
+			"default": 10,
+			"min": 4,
+			"max": 10
+		},
+		"ui-anim": {
+			"type": "int",
+			"name": "Menu animation speed",
+			"default": 5,
+			"min": 1,
+			"max": 10
 		}
 	}
 }
