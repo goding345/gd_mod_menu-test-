@@ -725,6 +725,36 @@ class $modify(BotPlayLayer, PlayLayer) {
 		bool prevQ = false, prevE = false;
 	};
 
+	// слои для хитбоксов/пути и списки объектов (создаём лениво, чтобы не зависеть от порядка загрузки)
+	void ensureTools() {
+		auto f = m_fields.self();
+		if (!f->hbNode) {
+			f->hbNode = CCDrawNode::create();
+			m_objectLayer->addChild(f->hbNode, 9998);
+		}
+		if (!f->pathNode) {
+			f->pathNode = CCDrawNode::create();
+			m_objectLayer->addChild(f->pathNode, 9997);
+		}
+
+		f->startPos.clear();
+		f->hbObjs.clear();
+		for (auto obj : CCArrayExt<GameObject*>(m_objects)) {
+			if (obj->m_objectID == 31) {
+				if (auto sp = typeinfo_cast<StartPosObject*>(obj)) f->startPos.push_back(sp);
+			}
+			auto t = obj->m_objectType;
+			if (!obj->m_isNoTouch && (t == GameObjectType::Hazard || t == GameObjectType::Solid || t == GameObjectType::Slope)) {
+				f->hbObjs.push_back({obj->getPositionX(), obj});
+			}
+		}
+		std::sort(f->startPos.begin(), f->startPos.end(),
+			[](StartPosObject* a, StartPosObject* b) { return a->getPositionX() < b->getPositionX(); });
+		std::sort(f->hbObjs.begin(), f->hbObjs.end(),
+			[](auto const& a, auto const& b) { return a.first < b.first; });
+
+	}
+
 	void setupHasCompleted() {
 		PlayLayer::setupHasCompleted();
 		auto label = CCLabelBMFont::create("", "chatFont.fnt");
@@ -746,25 +776,7 @@ class $modify(BotPlayLayer, PlayLayer) {
 		m_uiLayer->addChild(info);
 		m_fields->infoLabel = info;
 
-		// слои для хитбоксов и пути (в мире уровня)
-		m_fields->hbNode = CCDrawNode::create();
-		m_objectLayer->addChild(m_fields->hbNode, 9998);
-		m_fields->pathNode = CCDrawNode::create();
-		m_objectLayer->addChild(m_fields->pathNode, 9997);
-
-		for (auto obj : CCArrayExt<GameObject*>(m_objects)) {
-			if (obj->m_objectID == 31) {
-				if (auto sp = typeinfo_cast<StartPosObject*>(obj)) m_fields->startPos.push_back(sp);
-			}
-			auto t = obj->m_objectType;
-			if (!obj->m_isNoTouch && (t == GameObjectType::Hazard || t == GameObjectType::Solid || t == GameObjectType::Slope)) {
-				m_fields->hbObjs.push_back({obj->getPositionX(), obj});
-			}
-		}
-		std::sort(m_fields->startPos.begin(), m_fields->startPos.end(),
-			[](StartPosObject* a, StartPosObject* b) { return a->getPositionX() < b->getPositionX(); });
-		std::sort(m_fields->hbObjs.begin(), m_fields->hbObjs.end(),
-			[](auto const& a, auto const& b) { return a.first < b.first; });
+		this->ensureTools();
 
 		if (auto fx = createFxLayer()) {
 			// в сцену (рядом с игрой), чтобы повороты экрана не крутили снег и виньетку
@@ -872,6 +884,7 @@ class $modify(BotPlayLayer, PlayLayer) {
 		}
 
 		// ----- инструменты практики -----
+		if (!m_fields->hbNode || m_fields->hbObjs.empty()) this->ensureTools();
 		// layout mode: прячем декорации
 		if (mod->getSettingValue<bool>("layout-mode")) {
 			for (auto obj : CCArrayExt<GameObject*>(m_objects)) {
@@ -888,7 +901,7 @@ class $modify(BotPlayLayer, PlayLayer) {
 						ccp(r.getMinX(), r.getMinY()), ccp(r.getMaxX(), r.getMinY()),
 						ccp(r.getMaxX(), r.getMaxY()), ccp(r.getMinX(), r.getMaxY())
 					};
-					m_fields->hbNode->drawPolygon(v, 4, fill, 0.5f, border);
+					m_fields->hbNode->drawPolygon(v, 4, fill, 1.0f, border);
 				};
 				float px = m_player1->getPositionX();
 				auto it = std::lower_bound(m_fields->hbObjs.begin(), m_fields->hbObjs.end(), px - 320.f,
@@ -897,9 +910,9 @@ class $modify(BotPlayLayer, PlayLayer) {
 					auto obj = it->second;
 					auto t = obj->m_objectType;
 					if (t == GameObjectType::Hazard) {
-						drawRectBox(obj->getObjectRect(), ccc4f(1.f, 0.f, 0.f, 0.12f), ccc4f(1.f, 0.1f, 0.1f, 1.f));
+						drawRectBox(obj->getObjectRect(), ccc4f(1.f, 0.f, 0.f, 0.22f), ccc4f(1.f, 0.1f, 0.1f, 1.f));
 					} else {
-						drawRectBox(obj->getObjectRect(), ccc4f(0.f, 0.3f, 1.f, 0.10f), ccc4f(0.2f, 0.5f, 1.f, 1.f));
+						drawRectBox(obj->getObjectRect(), ccc4f(0.f, 0.3f, 1.f, 0.18f), ccc4f(0.2f, 0.5f, 1.f, 1.f));
 					}
 				}
 				drawRectBox(m_player1->getObjectRect(), ccc4f(1.f, 1.f, 0.f, 0.10f), ccc4f(1.f, 1.f, 0.f, 1.f));
