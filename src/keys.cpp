@@ -25,6 +25,10 @@ bool shiftKeyDown() {
 bool letterKeyDown(char c) {
 	return keyDownInGame(static_cast<int>(c));
 }
+
+bool vkDown(int vk) {
+	return keyDownInGame(vk);
+}
 #else
 bool tabKeyDown() {
 	return false;
@@ -39,6 +43,10 @@ bool shiftKeyDown() {
 }
 
 bool letterKeyDown(char) {
+	return false;
+}
+
+bool vkDown(int) {
 	return false;
 }
 #endif
