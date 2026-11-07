@@ -65,8 +65,6 @@ static std::vector<Page> const& pages() {
 			{1, "Rainb spd", "rainbow-speed", 1, 10, 1},
 			{1, "Opacity", "player-opacity", 1, 10, 1},
 			{0, "Hide player", "hide-player", 0, 0, 0},
-		}},
-		{"Wave", {
 			{0, "Wave noclip", "wave-noclip", 0, 0, 0},
 			{0, "Hide wave", "hide-wave", 0, 0, 0},
 			{0, "Solid wave", "solid-wave", 0, 0, 0},
@@ -111,6 +109,12 @@ static std::vector<Page> const& pages() {
 			{4, "Reset FX", "", 0, 0, 0},
 			{5, "Reset cheats", "", 0, 0, 0},
 		}},
+		{"Menu", {
+			{7, "Accent", "ui-accent", 0, 0, 0},
+			{1, "Opacity", "ui-opacity", 4, 10, 1},
+			{1, "Anim speed", "ui-anim", 1, 10, 1},
+			{6, "Reset layout", "", 0, 0, 0},
+		}},
 	};
 	return p;
 }
@@ -144,6 +148,7 @@ static std::string valueText(Row const& r) {
 	switch (r.kind) {
 		case 1: return std::to_string(m->getSettingValue<int64_t>(r.key));
 		case 2: return fmt::format("{:.1f}x", m->getSettingValue<double>(r.key));
+		case 7: return m->getSettingValue<std::string>(r.key);
 		case 3: {
 			std::string cur = m->getSettingValue<std::string>(r.key);
 			for (int i = 0; i < 3; ++i) if (cur == kModes[i]) return kModesShort[i];
@@ -202,7 +207,19 @@ static std::string rowLabel(Row const& r) {
 
 // ---------------- меню: панели с анимацией ----------------
 namespace ui {
-	static ccColor3B const kAccent = {236, 72, 153};
+	static char const* kAccentNames[7] = {"Pink", "Blue", "Green", "Orange", "Purple", "Red", "White"};
+	static ccColor3B accentFor(std::string const& n) {
+		if (n == "Blue") return ccc3(86, 156, 255);
+		if (n == "Green") return ccc3(72, 214, 130);
+		if (n == "Orange") return ccc3(255, 160, 64);
+		if (n == "Purple") return ccc3(166, 112, 255);
+		if (n == "Red") return ccc3(240, 84, 84);
+		if (n == "White") return ccc3(235, 236, 244);
+		return ccc3(236, 72, 153);
+	}
+	static ccColor3B accent() {
+		return accentFor(Mod::get()->getSettingValue<std::string>("ui-accent"));
+	}
 	static ccColor3B const kText = {208, 210, 222};
 	static ccColor3B const kTrackOff = {64, 66, 80};
 
@@ -303,6 +320,14 @@ public:
 		float dt = std::chrono::duration<float>(now - m_last).count();
 		m_last = now;
 		dt = std::min(dt, 0.05f);
+		auto md = Mod::get();
+		dt *= static_cast<float>(md->getSettingValue<int64_t>("ui-anim")) / 5.f;
+		m_opMul = static_cast<float>(md->getSettingValue<int64_t>("ui-opacity")) / 10.f;
+		auto acc = ui::accent();
+		if (acc.r != m_acc.r || acc.g != m_acc.g || acc.b != m_acc.b) {
+			m_acc = acc;
+			this->applyAccent();
+		}
 
 		float maxT = 0.45f + m_panels.size() * 0.045f;
 		m_time = std::min(m_time + (m_closing ? -dt * 1.6f : dt), maxT);
@@ -357,7 +382,9 @@ private:
 		float x = 0.f, topY = 0.f;
 		float trackX = 0.f;
 		float collapse = 0.f, collapseT = 0.f;
-		float lastA = -1.f, lastRowA = -1.f;
+		float lastA = -1.f, lastRowA = -1.f, lastOp = -1.f;
+		float defX = 0.f, defTop = 0.f;
+		std::vector<Fade> bgFades;   // фон, тень, шапка (учитывают Opacity)
 	};
 
 	std::vector<PanelUI> m_panels;
@@ -375,6 +402,9 @@ private:
 	int m_sliderRow = -1;
 	bool m_prevKey[256] = {};
 	CCLabelBMFont* m_hint = nullptr;
+	std::vector<CCRGBAProtocol*> m_accents;
+	ccColor3B m_acc = ccc3(236, 72, 153);
+	float m_opMul = 1.f;
 
 	bool initOverlay() {
 		if (!CCLayer::init()) return false;
@@ -422,6 +452,8 @@ private:
 			float x0 = (win.width - (cnt * kPanelW + (cnt - 1) * gap)) / 2.f;
 			float defX = x0 + c * (kPanelW + gap);
 			float defTop = rowTop[r];
+			pn.defX = defX;
+			pn.defTop = defTop;
 			pn.x = std::clamp(static_cast<float>(mod->getSavedValue<double>(fmt::format("pnl3-x-{}", p), defX)), 0.f, win.width - pn.w);
 			pn.topY = std::clamp(static_cast<float>(mod->getSavedValue<double>(fmt::format("pnl3-y-{}", p), defTop)), pn.curH, win.height);
 			pn.collapseT = mod->getSavedValue<bool>(fmt::format("pnl3-c-{}", p), false) ? 1.f : 0.f;
@@ -433,21 +465,22 @@ private:
 			// тень, фон, шапка (всё привязано к верхнему левому углу)
 			pn.shadow = CCLayerColor::create(ccc4(0, 0, 0, 70), pn.w + 3.f, pn.curH + 3.f);
 			pn.node->addChild(pn.shadow);
-			pn.fades.push_back({pn.shadow, 70});
+			pn.bgFades.push_back({pn.shadow, 70});
 
 			pn.body = CCLayerColor::create(ccc4(19, 20, 27, 238), pn.w, pn.bodyH);
 			pn.node->addChild(pn.body);
-			pn.fades.push_back({pn.body, 238});
+			pn.bgFades.push_back({pn.body, 238});
 
 			auto head = CCLayerColor::create(ccc4(30, 31, 43, 250), pn.w, kHeader);
 			head->setPosition(ccp(0.f, -kHeader));
 			pn.node->addChild(head);
-			pn.fades.push_back({head, 250});
+			pn.bgFades.push_back({head, 250});
 
-			auto line = CCLayerColor::create(ccc4(236, 72, 153, 255), pn.w, 1.5f);
+			auto line = CCLayerColor::create(ccc4(255, 255, 255, 255), pn.w, 1.5f);
 			line->setPosition(ccp(0.f, -kHeader));
 			pn.node->addChild(line);
 			pn.fades.push_back({line, 255});
+			m_accents.push_back(line);
 
 			pn.shimmer = CCLayerColor::create(ccc4(255, 255, 255, 14), 14.f, kHeader - 1.5f);
 			pn.shimmer->setPosition(ccp(0.f, -kHeader + 1.5f));
@@ -463,10 +496,11 @@ private:
 
 			pn.chevron = CCLabelBMFont::create(pn.collapseT > 0.5f ? "+" : "-", "chatFont.fnt");
 			pn.chevron->setScale(0.55f);
-			pn.chevron->setColor(ui::kAccent);
+			pn.chevron->setColor(ui::accent());
 			pn.chevron->setPosition(ccp(pn.w - 8.f, -kHeader / 2.f));
 			pn.node->addChild(pn.chevron);
 			pn.fades.push_back({pn.chevron, 255});
+			m_accents.push_back(pn.chevron);
 
 			pn.rowsNode = CCNode::create();
 			pn.node->addChild(pn.rowsNode);
@@ -485,8 +519,10 @@ private:
 				auto label = CCLabelBMFont::create(rowLabel(rw).c_str(), "chatFont.fnt");
 				ru.label = label;
 				label->setScale(0.4f);
-				label->setColor(rw.kind >= 4 ? ui::kAccent : ui::kText);
-				if (rw.kind >= 4) {
+				bool isBtn = rw.kind >= 4 && rw.kind != 7;
+				label->setColor(isBtn ? ui::accent() : ui::kText);
+				if (isBtn) m_accents.push_back(label);
+				if (isBtn) {
 					label->setPosition(ccp(pn.w / 2.f, cy));
 				} else {
 					label->setAnchorPoint(ccp(0.f, 0.5f));
@@ -513,10 +549,11 @@ private:
 					pn.rowsNode->addChild(ru.track);
 					pn.rowFades.push_back({ru.track, 255});
 
-					ru.fill = CCLayerColor::create(ccc4(236, 72, 153, 255), 1.f, 3.f);
+					ru.fill = CCLayerColor::create(ccc4(255, 255, 255, 255), 1.f, 3.f);
 					ru.fill->setPosition(ccp(pn.trackX, cy - 1.5f));
 					pn.rowsNode->addChild(ru.fill);
 					pn.rowFades.push_back({ru.fill, 255});
+					m_accents.push_back(ru.fill);
 
 					ru.knob = CCLayerColor::create(ccc4(240, 241, 247, 255), 3.f, 8.f);
 					ru.knob->setPosition(ccp(pn.trackX, cy - 4.f));
@@ -531,10 +568,11 @@ private:
 					ru.value->setPosition(ccp(pn.w - 6.f, cy));
 					pn.rowsNode->addChild(ru.value);
 					pn.rowFades.push_back({ru.value, 255});
-				} else if (rw.kind == 3) {
+				} else if (rw.kind == 3 || rw.kind == 7) {
 					ru.value = CCLabelBMFont::create(valueText(rw).c_str(), "chatFont.fnt");
 					ru.value->setScale(0.4f);
-					ru.value->setColor(ui::kAccent);
+					ru.value->setColor(ui::accent());
+					m_accents.push_back(ru.value);
 					ru.value->setAnchorPoint(ccp(1.f, 0.5f));
 					ru.value->setPosition(ccp(pn.w - 6.f, cy));
 					pn.rowsNode->addChild(ru.value);
@@ -545,6 +583,7 @@ private:
 			m_panels.push_back(std::move(pn));
 		}
 
+		this->applyAccent();
 		for (int i = 0; i < n; ++i) this->animatePanel(m_panels[i], i, 0.f, ccp(-999.f, -999.f));
 		this->scheduleUpdate();
 		return true;
@@ -578,6 +617,24 @@ private:
 		scan(0x2E);
 	}
 
+	void applyAccent() {
+		for (auto n : m_accents) n->setColor(m_acc);
+	}
+
+	void resetLayout() {
+		auto mod = Mod::get();
+		for (int i = 0; i < static_cast<int>(m_panels.size()); ++i) {
+			auto& pn = m_panels[i];
+			pn.x = pn.defX;
+			pn.topY = pn.defTop;
+			pn.collapseT = 0.f;
+			pn.chevron->setString("-");
+			mod->setSavedValue<double>(fmt::format("pnl3-x-{}", i), pn.x);
+			mod->setSavedValue<double>(fmt::format("pnl3-y-{}", i), pn.topY);
+			mod->setSavedValue<bool>(fmt::format("pnl3-c-{}", i), false);
+		}
+	}
+
 	float normOf(Row const& r) {
 		auto mod = Mod::get();
 		double v = (r.kind == 1) ? static_cast<double>(mod->getSettingValue<int64_t>(r.key))
@@ -602,9 +659,11 @@ private:
 		pn.rowsNode->setVisible(pn.collapse < 0.98f);
 
 		float rowA = std::clamp(1.f - pn.collapse * 1.8f, 0.f, 1.f);
-		if (std::abs(a - pn.lastA) > 0.002f || std::abs(rowA - pn.lastRowA) > 0.002f) {
+		if (std::abs(a - pn.lastA) > 0.002f || std::abs(rowA - pn.lastRowA) > 0.002f || std::abs(m_opMul - pn.lastOp) > 0.002f) {
 			pn.lastA = a;
 			pn.lastRowA = rowA;
+			pn.lastOp = m_opMul;
+			for (auto& f : pn.bgFades) f.node->setOpacity(static_cast<GLubyte>(f.base * a * m_opMul));
 			for (auto& f : pn.fades) f.node->setOpacity(static_cast<GLubyte>(f.base * a));
 			for (auto& f : pn.rowFades) f.node->setOpacity(static_cast<GLubyte>(f.base * a * rowA));
 		}
@@ -632,7 +691,7 @@ private:
 				ru.anim += (tgt - ru.anim) * k;
 				float cy = -kHeader - i * kRow - kRow / 2.f;
 				ru.knob->setPosition(ccp(pn.w - 24.f + ru.anim * 8.f, cy - 3.f));
-				ru.track->setColor(ui::lerpColor(ui::kTrackOff, ui::kAccent, ru.anim));
+				ru.track->setColor(ui::lerpColor(ui::kTrackOff, m_acc, ru.anim));
 			} else if (r.kind == 1 || r.kind == 2) {
 				float tgt = this->normOf(r);
 				ru.anim += (tgt - ru.anim) * k;
@@ -649,10 +708,19 @@ private:
 		auto mod = Mod::get();
 		auto const& r = *ru.row;
 
-		if (r.kind >= 4) {
+		if (r.kind >= 4 && r.kind != 7) {
 			if (r.kind == 4) resetFx();
-			else resetCheats();
+			else if (r.kind == 5) resetCheats();
+			else this->resetLayout();
 			this->refreshAll();
+			return;
+		}
+		if (r.kind == 7) {
+			std::string cur = mod->getSettingValue<std::string>(r.key);
+			int idx = 0;
+			for (int k = 0; k < 7; ++k) if (cur == ui::kAccentNames[k]) idx = k;
+			mod->setSettingValue<std::string>(r.key, ui::kAccentNames[(idx + 1) % 7]);
+			ru.value->setString(valueText(r).c_str());
 			return;
 		}
 		if (r.kind == 0) {
@@ -769,14 +837,15 @@ class $modify(MenuScheduler, CCScheduler) {
 			g_stepReq = false;
 		}
 
-		// speedhack только внутри уровня
+		// speedhack: масштаб времени планировщика (только внутри уровня)
+		float scale = 1.f;
 		if (PlayLayer::get() && !g_frozen) {
-			double sp = Mod::get()->getSettingValue<double>("speed");
-			if (std::abs(sp - 1.0) > 0.001) dt *= static_cast<float>(sp);
+			scale = static_cast<float>(Mod::get()->getSettingValue<double>("speed"));
 			if (Mod::get()->getSettingValue<bool>("slowmo-key") && shiftKeyDown()) {
-				dt *= static_cast<float>(Mod::get()->getSettingValue<double>("slowmo"));
+				scale *= static_cast<float>(Mod::get()->getSettingValue<double>("slowmo"));
 			}
 		}
+		this->setTimeScale(std::clamp(scale, 0.05f, 10.f));
 		CCScheduler::update(dt);
 	}
 };
