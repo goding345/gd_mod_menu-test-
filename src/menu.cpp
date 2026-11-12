@@ -101,6 +101,10 @@ static std::vector<Page> const& pages() {
 			{0, "StartPos Q/E", "startpos-switch", 0, 0, 0},
 			{0, "Frame step", "frame-step", 0, 0, 0},
 		}},
+		{"Music", {
+			{0, "Lyrics overlay", "lyrics-enabled", 0, 0, 0},
+			{1, "Subtitle size", "lyrics-size", 2, 10, 1},
+		}},
 		{"Extra", {
 			{0, "Flip screen", "fx-flip", 0, 0, 0},
 			{1, "Spin", "fx-spin", 0, 10, 1},
