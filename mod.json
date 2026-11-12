@@ -92,6 +92,19 @@
 			"name": "Solid wave trail",
 			"default": false
 		},
+		"lyrics-enabled": {
+			"type": "bool",
+			"name": "Music subtitles overlay",
+			"description": "Windows audio-reactive subtitle overlay. Put a synced lyrics.lrc file in the mod save folder for real lyrics.",
+			"default": true
+		},
+		"lyrics-size": {
+			"type": "int",
+			"name": "Subtitle size",
+			"default": 5,
+			"min": 2,
+			"max": 10
+		},
 		"fx-snow": {
 			"type": "int",
 			"name": "Snow",
