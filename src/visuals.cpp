@@ -13,8 +13,9 @@
 #include <string>
 #include <thread>
 
+using namespace geode::prelude;
+
 #ifdef _WIN32
-#define NOMINMAX
 #include <Windows.h>
 #include <mmdeviceapi.h>
 #include <audioclient.h>
@@ -172,7 +173,6 @@ static std::vector<LyricLine> loadLyrics() {
 }
 
 
-using namespace geode::prelude;
 
 struct FxParticle {
 	CCLayerColor* node = nullptr;
