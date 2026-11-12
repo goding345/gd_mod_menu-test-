@@ -4,6 +4,174 @@
 #include <random>
 #include <vector>
 
+#include <atomic>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
+#include <sstream>
+#include <string>
+#include <thread>
+
+#ifdef _WIN32
+#define NOMINMAX
+#include <Windows.h>
+#include <mmdeviceapi.h>
+#include <audioclient.h>
+#include <ksmedia.h>
+#endif
+
+// WASAPI loopback: measures the sound currently playing on the Windows output device.
+class SystemAudioMeter {
+public:
+	static SystemAudioMeter& get() {
+		static SystemAudioMeter instance;
+		return instance;
+	}
+
+	float level() const { return m_level.load(std::memory_order_relaxed); }
+
+private:
+	std::atomic<float> m_level{0.f};
+	std::atomic<bool> m_running{true};
+	std::thread m_thread;
+
+	SystemAudioMeter() {
+#ifdef _WIN32
+		m_thread = std::thread([this] { capture(); });
+#endif
+	}
+
+	~SystemAudioMeter() {
+		m_running.store(false);
+		if (m_thread.joinable()) m_thread.join();
+	}
+
+#ifdef _WIN32
+	void capture() {
+		HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+		bool uninit = SUCCEEDED(hr);
+		IMMDeviceEnumerator* enumerator = nullptr;
+		IMMDevice* device = nullptr;
+		IAudioClient* client = nullptr;
+		IAudioCaptureClient* captureClient = nullptr;
+		WAVEFORMATEX* format = nullptr;
+
+		do {
+			hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+				__uuidof(IMMDeviceEnumerator), reinterpret_cast<void**>(&enumerator));
+			if (FAILED(hr)) break;
+			hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
+			if (FAILED(hr)) break;
+			hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
+				reinterpret_cast<void**>(&client));
+			if (FAILED(hr)) break;
+			hr = client->GetMixFormat(&format);
+			if (FAILED(hr)) break;
+			hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED,
+				AUDCLNT_STREAMFLAGS_LOOPBACK, 1000000, 0, format, nullptr);
+			if (FAILED(hr)) break;
+			hr = client->GetService(__uuidof(IAudioCaptureClient),
+				reinterpret_cast<void**>(&captureClient));
+			if (FAILED(hr)) break;
+			hr = client->Start();
+			if (FAILED(hr)) break;
+
+			while (m_running.load()) {
+				UINT32 packet = 0;
+				if (FAILED(captureClient->GetNextPacketSize(&packet))) break;
+				if (!packet) {
+					std::this_thread::sleep_for(std::chrono::milliseconds(8));
+					continue;
+				}
+				while (packet && m_running.load()) {
+					BYTE* data = nullptr;
+					UINT32 frames = 0;
+					DWORD flags = 0;
+					if (FAILED(captureClient->GetBuffer(&data, &frames, &flags, nullptr, nullptr))) break;
+
+					double sum = 0.0;
+					size_t samples = static_cast<size_t>(frames) * format->nChannels;
+					if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT) && data && samples) {
+						if (format->wFormatTag == WAVE_FORMAT_IEEE_FLOAT ||
+							(format->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+								reinterpret_cast<WAVEFORMATEXTENSIBLE*>(format)->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT)) {
+							auto values = reinterpret_cast<float const*>(data);
+							for (size_t i = 0; i < samples; ++i) {
+								double v = std::clamp(static_cast<double>(values[i]), -1.0, 1.0);
+								sum += v * v;
+							}
+						} else if (format->wBitsPerSample == 16) {
+							auto values = reinterpret_cast<int16_t const*>(data);
+							for (size_t i = 0; i < samples; ++i) {
+								double v = values[i] / 32768.0;
+								sum += v * v;
+							}
+						} else if (format->wBitsPerSample == 32) {
+							auto values = reinterpret_cast<int32_t const*>(data);
+							for (size_t i = 0; i < samples; ++i) {
+								double v = values[i] / 2147483648.0;
+								sum += v * v;
+							}
+						}
+					}
+					float rms = samples ? static_cast<float>(std::sqrt(sum / samples)) : 0.f;
+					m_level.store(std::clamp(rms * 5.f, 0.f, 1.f), std::memory_order_relaxed);
+					captureClient->ReleaseBuffer(frames);
+					if (FAILED(captureClient->GetNextPacketSize(&packet))) packet = 0;
+				}
+			}
+			client->Stop();
+		} while (false);
+
+		if (format) CoTaskMemFree(format);
+		if (captureClient) captureClient->Release();
+		if (client) client->Release();
+		if (device) device->Release();
+		if (enumerator) enumerator->Release();
+		if (uninit) CoUninitialize();
+	}
+#endif
+};
+
+struct LyricLine {
+	float time = 0.f;
+	std::string text;
+};
+
+static std::vector<LyricLine> loadLyrics() {
+	std::vector<LyricLine> result;
+	try {
+		auto path = Mod::get()->getSaveDir() / "lyrics.lrc";
+		std::ifstream file(path);
+		std::string line;
+		while (std::getline(file, line)) {
+			size_t close = line.find(']');
+			if (line.empty() || line[0] != '[' || close == std::string::npos) continue;
+			std::string stamp = line.substr(1, close - 1);
+			size_t colon = stamp.find(':');
+			size_t dot = stamp.find_first_of(".,", colon == std::string::npos ? 0 : colon + 1);
+			if (colon == std::string::npos) continue;
+			try {
+				float minutes = std::stof(stamp.substr(0, colon));
+				float seconds = std::stof(stamp.substr(colon + 1,
+					dot == std::string::npos ? std::string::npos : dot - colon - 1));
+				float fraction = 0.f;
+				if (dot != std::string::npos) {
+					std::string part = stamp.substr(dot + 1);
+					if (part.size() == 1) fraction = std::stof(part) / 10.f;
+					else if (!part.empty()) fraction = std::stof(part.substr(0, 2)) / 100.f;
+				}
+				std::string lyric = line.substr(close + 1);
+				if (!lyric.empty()) result.push_back({minutes * 60.f + seconds + fraction, lyric});
+			} catch (...) {}
+		}
+	} catch (...) {}
+	std::sort(result.begin(), result.end(), [](auto const& a, auto const& b) { return a.time < b.time; });
+	return result;
+}
+
+
 using namespace geode::prelude;
 
 struct FxParticle {
@@ -60,6 +228,7 @@ public:
 		this->updateLines(gi("fx-scanlines"));
 		this->updateBars(gi("fx-letterbox"));
 		this->updateScene();
+		this->updateLyrics();
 	}
 
 private:
@@ -74,6 +243,9 @@ private:
 	std::vector<FxParticle> m_snow, m_rain, m_fire, m_petal, m_star;
 	std::mt19937 m_rng{std::random_device{}()};
 	float m_t = 0.f;
+	CCLabelBMFont* m_lyricLabel = nullptr;
+	std::vector<LyricLine> m_lyrics;
+	int m_currentLyric = -1;
 	bool m_sceneActive = false;
 	CCNode* m_target = nullptr;
 	CCPoint m_origPos = ccp(0, 0);
@@ -123,6 +295,16 @@ private:
 		m_barBottom->setVisible(false);
 		this->addChild(m_barTop, 4);
 		this->addChild(m_barBottom, 4);
+
+		m_lyrics = loadLyrics();
+		m_lyricLabel = CCLabelBMFont::create("", "chatFont.fnt");
+		if (m_lyricLabel) {
+			m_lyricLabel->setAnchorPoint(ccp(0.5f, 0.5f));
+			m_lyricLabel->setPosition(ccp(m_win.width * 0.5f, m_win.height - 42.f));
+			m_lyricLabel->setScale(0.72f);
+			m_lyricLabel->setOpacity(0);
+			this->addChild(m_lyricLabel, 20);
+		}
 
 		this->scheduleUpdate();
 	}
@@ -319,6 +501,39 @@ private:
 		} else if (m_sceneActive) {
 			this->resetScene();
 		}
+	}
+
+	void updateLyrics() {
+		if (!m_lyricLabel) return;
+		float volume = SystemAudioMeter::get().level();
+		int index = -1;
+		for (int i = 0; i < static_cast<int>(m_lyrics.size()); ++i) {
+			if (m_t >= m_lyrics[i].time) index = i;
+			else break;
+		}
+		if (index != m_currentLyric) {
+			m_currentLyric = index;
+			if (index >= 0) {
+				m_lyricLabel->setString(m_lyrics[index].text.c_str());
+				m_lyricLabel->stopAllActions();
+				m_lyricLabel->setOpacity(0);
+				m_lyricLabel->setScale(0.62f);
+				m_lyricLabel->runAction(CCFadeTo::create(0.22f, 255));
+				m_lyricLabel->runAction(CCScaleTo::create(0.22f, 0.72f));
+			}
+		}
+		if (index < 0 || volume < 0.015f) {
+			m_lyricLabel->setOpacity(static_cast<GLubyte>(
+				std::max(0, static_cast<int>(m_lyricLabel->getOpacity()) - 12)));
+			return;
+		}
+		float hue = std::fmod(m_t * 0.10f, 1.f);
+		m_lyricLabel->setColor(hueColor(hue));
+		float pulse = 1.f + volume * 0.10f;
+		m_lyricLabel->setScale(0.72f * pulse);
+		m_lyricLabel->setPosition(ccp(m_win.width * 0.5f,
+			m_win.height - 42.f + std::sin(m_t * 3.f) * (1.5f + volume * 3.f)));
+		m_lyricLabel->setOpacity(static_cast<GLubyte>(std::clamp(190.f + volume * 65.f, 0.f, 255.f)));
 	}
 
 	void resetScene() {
