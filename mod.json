@@ -6,7 +6,7 @@
 	},
 	"id": "user.autojump",
 	"name": "Mod Menu",
-	"version": "v2.6.0",
+	"version": "v2.9.0",
 	"developer": "user",
 	"description": "Menu on Tab: cheats, auto bot, macros, icon hack, rainbow icon, FPS/clock, visual effects.",
 	"settings": {
@@ -91,19 +91,6 @@
 			"type": "bool",
 			"name": "Solid wave trail",
 			"default": false
-		},
-		"lyrics-enabled": {
-			"type": "bool",
-			"name": "Music subtitles overlay",
-			"description": "Windows audio-reactive subtitle overlay. Put a synced lyrics.lrc file in the mod save folder for real lyrics.",
-			"default": true
-		},
-		"lyrics-size": {
-			"type": "int",
-			"name": "Subtitle size",
-			"default": 5,
-			"min": 2,
-			"max": 10
 		},
 		"fx-snow": {
 			"type": "int",
@@ -378,6 +365,58 @@
 			"name": "Menu animation speed",
 			"default": 5,
 			"min": 1,
+			"max": 10
+		},
+		"menu-button": {
+			"type": "bool",
+			"name": "Round menu button (phones/tablets)",
+			"default": true
+		},
+		"menu-button-desktop": {
+			"type": "bool",
+			"name": "Show round button on PC too",
+			"default": false
+		},
+		"fx-embers": {
+			"type": "int",
+			"name": "Embers",
+			"default": 0,
+			"min": 0,
+			"max": 10
+		},
+		"fx-confetti": {
+			"type": "int",
+			"name": "Confetti",
+			"default": 0,
+			"min": 0,
+			"max": 10
+		},
+		"fx-aurora": {
+			"type": "int",
+			"name": "Aurora",
+			"default": 0,
+			"min": 0,
+			"max": 10
+		},
+		"fx-grade": {
+			"type": "int",
+			"name": "Color grade (1 sepia, 2 night, 3 warm, 4 cold, 5 retro)",
+			"default": 0,
+			"min": 0,
+			"max": 5
+		},
+		"fx-glow": {
+			"type": "int",
+			"name": "Glow frame",
+			"default": 0,
+			"min": 0,
+			"max": 10
+		},
+		"fx-grain": {
+			"type": "int",
+			"name": "Film grain",
+			"default": 0,
+			"min": 0,
 			"max": 10
 		}
 	}
