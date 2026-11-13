@@ -76,6 +76,8 @@ static std::vector<Page> const& pages() {
 			{1, "Petals", "fx-petals", 0, 10, 1},
 			{1, "Stars", "fx-stars", 0, 10, 1},
 			{1, "Wind", "fx-wind", -10, 10, 1},
+			{1, "Embers", "fx-embers", 0, 10, 1},
+			{1, "Confetti", "fx-confetti", 0, 10, 1},
 		}},
 		{"Screen", {
 			{2, "Stretch X", "fx-stretch-x", 0.3, 3.0, 0.1},
@@ -84,6 +86,8 @@ static std::vector<Page> const& pages() {
 			{1, "Tilt", "fx-tilt", -45, 45, 5},
 			{1, "Skew X", "fx-skew", -45, 45, 5},
 			{0, "Mirror", "fx-mirror", 0, 0, 0},
+			{1, "Aurora", "fx-aurora", 0, 10, 1},
+			{1, "Grade", "fx-grade", 0, 5, 1},
 		}},
 		{"Fun", {
 			{1, "Rainbow", "fx-tint", 0, 10, 1},
@@ -101,15 +105,13 @@ static std::vector<Page> const& pages() {
 			{0, "StartPos Q/E", "startpos-switch", 0, 0, 0},
 			{0, "Frame step", "frame-step", 0, 0, 0},
 		}},
-		{"Music", {
-			{0, "Lyrics overlay", "lyrics-enabled", 0, 0, 0},
-			{1, "Subtitle size", "lyrics-size", 2, 10, 1},
-		}},
 		{"Extra", {
 			{0, "Flip screen", "fx-flip", 0, 0, 0},
 			{1, "Spin", "fx-spin", 0, 10, 1},
 			{0, "Show clock", "show-clock", 0, 0, 0},
 			{0, "Attempt time", "show-time", 0, 0, 0},
+			{1, "Glow frame", "fx-glow", 0, 10, 1},
+			{1, "Grain", "fx-grain", 0, 10, 1},
 			{4, "Reset FX", "", 0, 0, 0},
 			{5, "Reset cheats", "", 0, 0, 0},
 		}},
@@ -117,6 +119,8 @@ static std::vector<Page> const& pages() {
 			{7, "Accent", "ui-accent", 0, 0, 0},
 			{1, "Opacity", "ui-opacity", 4, 10, 1},
 			{1, "Anim speed", "ui-anim", 1, 10, 1},
+			{0, "Round button", "menu-button", 0, 0, 0},
+			{0, "Button on PC", "menu-button-desktop", 0, 0, 0},
 			{6, "Reset layout", "", 0, 0, 0},
 		}},
 	};
@@ -128,7 +132,8 @@ static void resetFx() {
 	auto m = Mod::get();
 	for (char const* k : {"fx-snow", "fx-rain", "fx-fireflies", "fx-petals", "fx-stars", "fx-wind",
 		"fx-tilt", "fx-skew", "fx-tint", "fx-vignette", "fx-scanlines", "fx-letterbox",
-		"fx-wobble", "fx-shake", "fx-pulse", "fx-spin"}) {
+		"fx-wobble", "fx-shake", "fx-pulse", "fx-spin",
+		"fx-embers", "fx-confetti", "fx-aurora", "fx-grade", "fx-glow", "fx-grain"}) {
 		m->setSettingValue<int64_t>(k, 0);
 	}
 	for (char const* k : {"fx-stretch-x", "fx-stretch-y", "fx-zoom"}) {
@@ -789,17 +794,24 @@ private:
 	}
 };
 
+// открыть/закрыть меню (клавиша Tab или круглая кнопка на телефоне)
+void toggleHackMenu() {
+	if (HackOverlay::s_open) {
+		HackOverlay::s_open->toggleMenu();
+	} else if (auto scene = CCDirector::get()->getRunningScene()) {
+		if (auto menu = HackOverlay::create()) scene->addChild(menu, 99999);
+	}
+}
+
+ccColor3B menuAccent() {
+	return ui::accent();
+}
+
 class $modify(MenuScheduler, CCScheduler) {
 	void update(float dt) {
 		static bool prevTab = false;
 		bool now = tabKeyDown();
-		if (now && !prevTab) {
-			if (HackOverlay::s_open) {
-				HackOverlay::s_open->toggleMenu();
-			} else if (auto scene = CCDirector::get()->getRunningScene()) {
-				if (auto menu = HackOverlay::create()) scene->addChild(menu, 99999);
-			}
-		}
+		if (now && !prevTab) toggleHackMenu();
 		prevTab = now;
 
 		// горячие клавиши на переключатели (пока меню закрыто)
