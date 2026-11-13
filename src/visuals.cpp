@@ -4,175 +4,9 @@
 #include <random>
 #include <vector>
 
-#include <atomic>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <mutex>
-#include <sstream>
-#include <string>
-#include <thread>
-
 using namespace geode::prelude;
 
-#ifdef _WIN32
-#include <Windows.h>
-#include <mmdeviceapi.h>
-#include <audioclient.h>
-#include <ksmedia.h>
-#endif
-
-// WASAPI loopback: measures the sound currently playing on the Windows output device.
-class SystemAudioMeter {
-public:
-	static SystemAudioMeter& get() {
-		static SystemAudioMeter instance;
-		return instance;
-	}
-
-	float level() const { return m_level.load(std::memory_order_relaxed); }
-
-private:
-	std::atomic<float> m_level{0.f};
-	std::atomic<bool> m_running{true};
-	std::thread m_thread;
-
-	SystemAudioMeter() {
-#ifdef _WIN32
-		m_thread = std::thread([this] { capture(); });
-#endif
-	}
-
-	~SystemAudioMeter() {
-		m_running.store(false);
-		if (m_thread.joinable()) m_thread.join();
-	}
-
-#ifdef _WIN32
-	void capture() {
-		HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-		bool uninit = SUCCEEDED(hr);
-		IMMDeviceEnumerator* enumerator = nullptr;
-		IMMDevice* device = nullptr;
-		IAudioClient* client = nullptr;
-		IAudioCaptureClient* captureClient = nullptr;
-		WAVEFORMATEX* format = nullptr;
-
-		do {
-			hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
-				__uuidof(IMMDeviceEnumerator), reinterpret_cast<void**>(&enumerator));
-			if (FAILED(hr)) break;
-			hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
-			if (FAILED(hr)) break;
-			hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
-				reinterpret_cast<void**>(&client));
-			if (FAILED(hr)) break;
-			hr = client->GetMixFormat(&format);
-			if (FAILED(hr)) break;
-			hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED,
-				AUDCLNT_STREAMFLAGS_LOOPBACK, 1000000, 0, format, nullptr);
-			if (FAILED(hr)) break;
-			hr = client->GetService(__uuidof(IAudioCaptureClient),
-				reinterpret_cast<void**>(&captureClient));
-			if (FAILED(hr)) break;
-			hr = client->Start();
-			if (FAILED(hr)) break;
-
-			while (m_running.load()) {
-				UINT32 packet = 0;
-				if (FAILED(captureClient->GetNextPacketSize(&packet))) break;
-				if (!packet) {
-					std::this_thread::sleep_for(std::chrono::milliseconds(8));
-					continue;
-				}
-				while (packet && m_running.load()) {
-					BYTE* data = nullptr;
-					UINT32 frames = 0;
-					DWORD flags = 0;
-					if (FAILED(captureClient->GetBuffer(&data, &frames, &flags, nullptr, nullptr))) break;
-
-					double sum = 0.0;
-					size_t samples = static_cast<size_t>(frames) * format->nChannels;
-					if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT) && data && samples) {
-						if (format->wFormatTag == WAVE_FORMAT_IEEE_FLOAT ||
-							(format->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
-								reinterpret_cast<WAVEFORMATEXTENSIBLE*>(format)->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT)) {
-							auto values = reinterpret_cast<float const*>(data);
-							for (size_t i = 0; i < samples; ++i) {
-								double v = std::clamp(static_cast<double>(values[i]), -1.0, 1.0);
-								sum += v * v;
-							}
-						} else if (format->wBitsPerSample == 16) {
-							auto values = reinterpret_cast<int16_t const*>(data);
-							for (size_t i = 0; i < samples; ++i) {
-								double v = values[i] / 32768.0;
-								sum += v * v;
-							}
-						} else if (format->wBitsPerSample == 32) {
-							auto values = reinterpret_cast<int32_t const*>(data);
-							for (size_t i = 0; i < samples; ++i) {
-								double v = values[i] / 2147483648.0;
-								sum += v * v;
-							}
-						}
-					}
-					float rms = samples ? static_cast<float>(std::sqrt(sum / samples)) : 0.f;
-					m_level.store(std::clamp(rms * 5.f, 0.f, 1.f), std::memory_order_relaxed);
-					captureClient->ReleaseBuffer(frames);
-					if (FAILED(captureClient->GetNextPacketSize(&packet))) packet = 0;
-				}
-			}
-			client->Stop();
-		} while (false);
-
-		if (format) CoTaskMemFree(format);
-		if (captureClient) captureClient->Release();
-		if (client) client->Release();
-		if (device) device->Release();
-		if (enumerator) enumerator->Release();
-		if (uninit) CoUninitialize();
-	}
-#endif
-};
-
-struct LyricLine {
-	float time = 0.f;
-	std::string text;
-};
-
-static std::vector<LyricLine> loadLyrics() {
-	std::vector<LyricLine> result;
-	try {
-		auto path = Mod::get()->getSaveDir() / "lyrics.lrc";
-		std::ifstream file(path);
-		std::string line;
-		while (std::getline(file, line)) {
-			size_t close = line.find(']');
-			if (line.empty() || line[0] != '[' || close == std::string::npos) continue;
-			std::string stamp = line.substr(1, close - 1);
-			size_t colon = stamp.find(':');
-			size_t dot = stamp.find_first_of(".,", colon == std::string::npos ? 0 : colon + 1);
-			if (colon == std::string::npos) continue;
-			try {
-				float minutes = std::stof(stamp.substr(0, colon));
-				float seconds = std::stof(stamp.substr(colon + 1,
-					dot == std::string::npos ? std::string::npos : dot - colon - 1));
-				float fraction = 0.f;
-				if (dot != std::string::npos) {
-					std::string part = stamp.substr(dot + 1);
-					if (part.size() == 1) fraction = std::stof(part) / 10.f;
-					else if (!part.empty()) fraction = std::stof(part.substr(0, 2)) / 100.f;
-				}
-				std::string lyric = line.substr(close + 1);
-				if (!lyric.empty()) result.push_back({minutes * 60.f + seconds + fraction, lyric});
-			} catch (...) {}
-		}
-	} catch (...) {}
-	std::sort(result.begin(), result.end(), [](auto const& a, auto const& b) { return a.time < b.time; });
-	return result;
-}
-
-
+ccColor3B menuAccent(); // menu.cpp
 
 struct FxParticle {
 	CCLayerColor* node = nullptr;
@@ -215,20 +49,27 @@ public:
 		this->adjustPool(m_fire, gi("fx-fireflies") * 5, 2);
 		this->adjustPool(m_petal, gi("fx-petals") * 8, 3);
 		this->adjustPool(m_star, gi("fx-stars") * 8, 4);
+		this->adjustPool(m_ember, gi("fx-embers") * 6, 5);
+		this->adjustPool(m_confetti, gi("fx-confetti") * 8, 6);
 
 		float wind = gi("fx-wind") * 6.f;
 		this->stepFalling(m_snow, dt, wind, true);
 		this->stepFalling(m_rain, dt, wind, false);
 		this->stepFireflies(dt);
-		this->stepPetals(dt, wind);
+		this->stepRotating(m_petal, dt, wind);
+		this->stepRotating(m_confetti, dt, wind);
+		this->stepEmbers(dt, wind);
 		this->stepStars();
 
 		this->updateTint(gi("fx-tint"));
 		this->updateVignette(gi("fx-vignette"));
 		this->updateLines(gi("fx-scanlines"));
 		this->updateBars(gi("fx-letterbox"));
+		this->updateAurora(gi("fx-aurora"));
+		this->updateGrade(gi("fx-grade"));
+		this->updateGlow(gi("fx-glow"));
+		this->updateGrain(gi("fx-grain"), dt);
 		this->updateScene();
-		this->updateLyrics();
 	}
 
 private:
@@ -240,12 +81,15 @@ private:
 	CCLayerColor* m_barBottom = nullptr;
 	int m_lastVig = -1;
 	int m_lastLines = -1;
-	std::vector<FxParticle> m_snow, m_rain, m_fire, m_petal, m_star;
+	std::vector<FxParticle> m_snow, m_rain, m_fire, m_petal, m_star, m_ember, m_confetti;
+	CCLayerGradient* m_aur[3] = {nullptr, nullptr, nullptr};
+	CCLayerColor* m_grade = nullptr;
+	CCLayerColor* m_edge[4] = {nullptr, nullptr, nullptr, nullptr};
+	std::vector<CCLayerColor*> m_grain;
+	float m_grainT = 0.f;
+	int m_lastGrade = -1;
 	std::mt19937 m_rng{std::random_device{}()};
 	float m_t = 0.f;
-	CCLabelBMFont* m_lyricLabel = nullptr;
-	std::vector<LyricLine> m_lyrics;
-	int m_currentLyric = -1;
 	bool m_sceneActive = false;
 	CCNode* m_target = nullptr;
 	CCPoint m_origPos = ccp(0, 0);
@@ -296,14 +140,40 @@ private:
 		this->addChild(m_barTop, 4);
 		this->addChild(m_barBottom, 4);
 
-		m_lyrics = loadLyrics();
-		m_lyricLabel = CCLabelBMFont::create("", "chatFont.fnt");
-		if (m_lyricLabel) {
-			m_lyricLabel->setAnchorPoint(ccp(0.5f, 0.5f));
-			m_lyricLabel->setPosition(ccp(m_win.width * 0.5f, m_win.height - 42.f));
-			m_lyricLabel->setScale(0.72f);
-			m_lyricLabel->setOpacity(0);
-			this->addChild(m_lyricLabel, 20);
+		// северное сияние: три цветные полосы сверху
+		for (int i = 0; i < 3; ++i) {
+			auto g = CCLayerGradient::create(ccc4(80, 255, 170, 0), ccc4(80, 255, 170, 0), ccp(0, -1));
+			g->setContentSize(CCSize(m_win.width, 95.f));
+			g->setPosition({0.f, m_win.height - 95.f});
+			g->setVisible(false);
+			this->addChild(g, 0);
+			m_aur[i] = g;
+		}
+
+		// цветокоррекция поверх всего
+		m_grade = CCLayerColor::create(ccc4(0, 0, 0, 0), m_win.width, m_win.height);
+		m_grade->setVisible(false);
+		this->addChild(m_grade, 3);
+
+		// светящаяся рамка по краям экрана
+		for (int i = 0; i < 4; ++i) {
+			bool horiz = i < 2;
+			auto e = CCLayerColor::create(ccc4(255, 255, 255, 0), horiz ? m_win.width : 3.f, horiz ? 3.f : m_win.height);
+			if (i == 0) e->setPosition({0.f, 0.f});
+			if (i == 1) e->setPosition({0.f, m_win.height - 3.f});
+			if (i == 2) e->setPosition({0.f, 0.f});
+			if (i == 3) e->setPosition({m_win.width - 3.f, 0.f});
+			e->setVisible(false);
+			this->addChild(e, 4);
+			m_edge[i] = e;
+		}
+
+		// плёночное зерно
+		for (int i = 0; i < 90; ++i) {
+			auto q = CCLayerColor::create(ccc4(255, 255, 255, 0), 2.f, 2.f);
+			q->setVisible(false);
+			this->addChild(q, 3);
+			m_grain.push_back(q);
 		}
 
 		this->scheduleUpdate();
@@ -335,6 +205,19 @@ private:
 				p.vy = frand(18.f, 40.f);
 				p.vx = frand(-10.f, 10.f);
 				p.vr = frand(-90.f, 90.f);
+			} else if (type == 5) {
+				w = h = frand(1.5f, 3.5f);
+				col = ccc4(255, 150, 60, 230);
+				p.vy = frand(25.f, 70.f);
+				p.vx = frand(-12.f, 12.f);
+			} else if (type == 6) {
+				w = frand(3.f, 5.f);
+				h = w * 1.6f;
+				auto c = hueColor(frand(0.f, 1.f));
+				col = ccc4(c.r, c.g, c.b, 230);
+				p.vy = frand(35.f, 80.f);
+				p.vx = frand(-15.f, 15.f);
+				p.vr = frand(-200.f, 200.f);
 			} else {
 				w = h = frand(1.5f, 3.f);
 				col = ccc4(255, 255, 255, 200);
@@ -373,8 +256,8 @@ private:
 		}
 	}
 
-	void stepPetals(float dt, float wind) {
-		for (auto& p : m_petal) {
+	void stepRotating(std::vector<FxParticle>& pool, float dt, float wind) {
+		for (auto& p : pool) {
 			p.y -= p.vy * dt;
 			p.x += (p.vx + wind + std::sin(m_t * 1.1f + p.phase) * 20.f) * dt;
 			p.rot += p.vr * dt;
@@ -446,6 +329,75 @@ private:
 		m_barBottom->setPosition({0.f, 0.f});
 	}
 
+	void stepEmbers(float dt, float wind) {
+		for (auto& p : m_ember) {
+			p.y += p.vy * dt;
+			p.x += (p.vx + wind + std::sin(m_t * 2.f + p.phase) * 10.f) * dt;
+			if (p.y > m_win.height + 16.f) {
+				p.y = -16.f;
+				p.x = frand(0.f, m_win.width);
+			}
+			if (p.x < -16.f) p.x = m_win.width + 16.f;
+			if (p.x > m_win.width + 16.f) p.x = -16.f;
+			p.node->setPosition({p.x, p.y});
+			float fl = 0.6f + 0.4f * std::sin(m_t * 9.f + p.phase * 3.f);
+			p.node->setOpacity(static_cast<GLubyte>(230.f * fl));
+		}
+	}
+
+	void updateAurora(int level) {
+		for (int i = 0; i < 3; ++i) {
+			bool on = level > 0;
+			m_aur[i]->setVisible(on);
+			if (!on) continue;
+			float h = std::fmod(0.35f + i * 0.18f + std::sin(m_t * 0.25f + i) * 0.08f, 1.f);
+			auto c = hueColor(h);
+			float pulse = 0.55f + 0.45f * std::sin(m_t * 0.6f + i * 1.7f);
+			m_aur[i]->setStartColor(c);
+			m_aur[i]->setEndColor(c);
+			m_aur[i]->setStartOpacity(static_cast<GLubyte>(std::clamp(level * 9.f * pulse, 0.f, 120.f)));
+			m_aur[i]->setEndOpacity(0);
+			m_aur[i]->setPositionY(m_win.height - 95.f + std::sin(m_t * 0.4f + i * 2.f) * 10.f);
+		}
+	}
+
+	void updateGrade(int level) {
+		if (level == m_lastGrade) return;
+		m_lastGrade = level;
+		m_grade->setVisible(level > 0);
+		switch (level) {
+			case 1: m_grade->setColor(ccc3(112, 66, 20)); m_grade->setOpacity(70); break;   // сепия
+			case 2: m_grade->setColor(ccc3(20, 30, 90)); m_grade->setOpacity(95); break;    // ночь
+			case 3: m_grade->setColor(ccc3(255, 140, 40)); m_grade->setOpacity(45); break;  // тепло
+			case 4: m_grade->setColor(ccc3(60, 150, 255)); m_grade->setOpacity(45); break;  // холод
+			case 5: m_grade->setColor(ccc3(160, 60, 200)); m_grade->setOpacity(60); break;  // ретро
+			default: break;
+		}
+	}
+
+	void updateGlow(int level) {
+		auto c = menuAccent();
+		float pulse = 0.65f + 0.35f * std::sin(m_t * 3.f);
+		for (int i = 0; i < 4; ++i) {
+			m_edge[i]->setVisible(level > 0);
+			if (level <= 0) continue;
+			m_edge[i]->setColor(c);
+			m_edge[i]->setOpacity(static_cast<GLubyte>(std::clamp(level * 20.f * pulse, 0.f, 220.f)));
+		}
+	}
+
+	void updateGrain(int level, float dt) {
+		m_grainT += dt;
+		bool on = level > 0;
+		for (auto q : m_grain) q->setVisible(on);
+		if (!on || m_grainT < 0.06f) return;
+		m_grainT = 0.f;
+		for (auto q : m_grain) {
+			q->setPosition({frand(0.f, m_win.width), frand(0.f, m_win.height)});
+			q->setOpacity(static_cast<GLubyte>(frand(0.3f, 1.f) * level * 9.f));
+		}
+	}
+
 	void updateScene() {
 		auto mod = Mod::get();
 		float sx = static_cast<float>(mod->getSettingValue<double>("fx-stretch-x"));
@@ -501,39 +453,6 @@ private:
 		} else if (m_sceneActive) {
 			this->resetScene();
 		}
-	}
-
-	void updateLyrics() {
-		if (!m_lyricLabel) return;
-		float volume = SystemAudioMeter::get().level();
-		int index = -1;
-		for (int i = 0; i < static_cast<int>(m_lyrics.size()); ++i) {
-			if (m_t >= m_lyrics[i].time) index = i;
-			else break;
-		}
-		if (index != m_currentLyric) {
-			m_currentLyric = index;
-			if (index >= 0) {
-				m_lyricLabel->setString(m_lyrics[index].text.c_str());
-				m_lyricLabel->stopAllActions();
-				m_lyricLabel->setOpacity(0);
-				m_lyricLabel->setScale(0.62f);
-				m_lyricLabel->runAction(CCFadeTo::create(0.22f, 255));
-				m_lyricLabel->runAction(CCScaleTo::create(0.22f, 0.72f));
-			}
-		}
-		if (index < 0 || volume < 0.015f) {
-			m_lyricLabel->setOpacity(static_cast<GLubyte>(
-				std::max(0, static_cast<int>(m_lyricLabel->getOpacity()) - 12)));
-			return;
-		}
-		float hue = std::fmod(m_t * 0.10f, 1.f);
-		m_lyricLabel->setColor(hueColor(hue));
-		float pulse = 1.f + volume * 0.10f;
-		m_lyricLabel->setScale(0.72f * pulse);
-		m_lyricLabel->setPosition(ccp(m_win.width * 0.5f,
-			m_win.height - 42.f + std::sin(m_t * 3.f) * (1.5f + volume * 3.f)));
-		m_lyricLabel->setOpacity(static_cast<GLubyte>(std::clamp(190.f + volume * 65.f, 0.f, 255.f)));
 	}
 
 	void resetScene() {
