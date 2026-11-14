@@ -1,6 +1,7 @@
 #include <Geode/Geode.hpp>
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <random>
 #include <vector>
 
@@ -8,10 +9,37 @@ using namespace geode::prelude;
 
 ccColor3B menuAccent(); // menu.cpp
 
+// цвет фона уровня (его присылает main.cpp)
+static ccColor3B g_bgColor = ccc3(255, 120, 200);
+void setFxBackgroundColor(ccColor3B c) {
+	g_bgColor = c;
+}
+
 struct FxParticle {
 	CCLayerColor* node = nullptr;
 	float x = 0.f, y = 0.f, vx = 0.f, vy = 0.f, phase = 0.f, rot = 0.f, vr = 0.f;
+	ccColor3B orig = ccc3(255, 255, 255);
 };
+
+struct FxSprite {
+	CCSprite* node = nullptr;
+	float x = 0.f, y = 0.f, vx = 0.f, vy = 0.f, phase = 0.f, rot = 0.f, vr = 0.f;
+};
+
+static void rgb2hsv(ccColor3B c, float& h, float& s, float& v) {
+	float r = c.r / 255.f, g = c.g / 255.f, b = c.b / 255.f;
+	float mx = std::max({r, g, b}), mn = std::min({r, g, b});
+	float d = mx - mn;
+	v = mx;
+	s = mx <= 0.f ? 0.f : d / mx;
+	if (d <= 0.0001f) { h = 0.f; return; }
+	if (mx == r) h = std::fmod((g - b) / d, 6.f);
+	else if (mx == g) h = (b - r) / d + 2.f;
+	else h = (r - g) / d + 4.f;
+	h /= 6.f;
+	if (h < 0.f) h += 1.f;
+}
+
 
 static ccColor3B hueColor(float h) {
 	auto cl = [](float v) { return std::clamp(v, 0.f, 1.f); };
@@ -19,6 +47,13 @@ static ccColor3B hueColor(float h) {
 	float g = cl(2.f - std::fabs(h * 6.f - 2.f));
 	float b = cl(2.f - std::fabs(h * 6.f - 4.f));
 	return ccc3(static_cast<GLubyte>(r * 255.f), static_cast<GLubyte>(g * 255.f), static_cast<GLubyte>(b * 255.f));
+}
+
+static ccColor3B hsvColor(float h, float s, float v) {
+	h = h - std::floor(h);
+	auto base = hueColor(h);
+	auto f = [&](GLubyte c) { return static_cast<GLubyte>(std::clamp(((1.f - s) * 255.f + s * c) * v, 0.f, 255.f)); };
+	return ccc3(f(base.r), f(base.g), f(base.b));
 }
 
 class FxLayer : public CCNode {
@@ -32,6 +67,10 @@ public:
 		}
 		delete ret;
 		return nullptr;
+	}
+
+	~FxLayer() override {
+		if (m_customTex) m_customTex->release();
 	}
 
 	void onExit() override {
@@ -53,12 +92,16 @@ public:
 		this->adjustPool(m_confetti, gi("fx-confetti") * 8, 6);
 
 		float wind = gi("fx-wind") * 6.f;
+		this->adjustCustom(gi("fx-custom") * 6);
 		this->stepFalling(m_snow, dt, wind, true);
 		this->stepFalling(m_rain, dt, wind, false);
 		this->stepFireflies(dt);
 		this->stepRotating(m_petal, dt, wind);
 		this->stepRotating(m_confetti, dt, wind);
 		this->stepEmbers(dt, wind);
+		bool tintCustom = mod->getSettingValue<bool>("fx-custom-tint");
+		this->stepCustom(dt, wind, gi("fx-custom-mode"), gi("fx-custom-size") * 0.1f);
+		this->applySync(dt, tintCustom);
 		this->stepStars();
 
 		this->updateTint(gi("fx-tint"));
@@ -89,6 +132,11 @@ private:
 	float m_grainT = 0.f;
 	int m_lastGrade = -1;
 	std::mt19937 m_rng{std::random_device{}()};
+	std::vector<FxSprite> m_custom;
+	CCTexture2D* m_customTex = nullptr;
+	bool m_syncWas = false;
+	float m_syncT = 0.f;
+	float m_bgF[3] = {255.f, 120.f, 200.f};
 	float m_t = 0.f;
 	bool m_sceneActive = false;
 	CCNode* m_target = nullptr;
@@ -176,7 +224,109 @@ private:
 			m_grain.push_back(q);
 		}
 
+		this->loadCustom();
 		this->scheduleUpdate();
+	}
+
+	// своя картинка частицы: <папка мода>/custom/particle.png (прозрачный PNG)
+	void loadCustom() {
+		auto dir = Mod::get()->getSaveDir() / "custom";
+		std::error_code ec;
+		std::filesystem::create_directories(dir, ec);
+		auto path = (dir / "particle.png").string();
+		if (!std::filesystem::exists(dir / "particle.png")) {
+			log::info("[AutoJump] custom particle: put a PNG here -> {}", path);
+			return;
+		}
+		CCTextureCache::sharedTextureCache()->removeTextureForKey(path.c_str());
+		if (auto spr = CCSprite::create(path.c_str())) {
+			m_customTex = spr->getTexture();
+			if (m_customTex) m_customTex->retain();
+			log::info("[AutoJump] custom particle loaded: {}", path);
+		} else {
+			log::warn("[AutoJump] custom particle: could not load {}", path);
+		}
+	}
+
+	void adjustCustom(int target) {
+		if (!m_customTex) target = 0;
+		while (static_cast<int>(m_custom.size()) < target) {
+			FxSprite p;
+			p.node = CCSprite::createWithTexture(m_customTex);
+			p.phase = frand(0.f, 6.28f);
+			p.x = frand(0.f, m_win.width);
+			p.y = frand(0.f, m_win.height);
+			p.vy = frand(22.f, 55.f);
+			p.vx = frand(-10.f, 10.f);
+			p.vr = frand(-70.f, 70.f);
+			p.node->setPosition({p.x, p.y});
+			this->addChild(p.node, 2);
+			m_custom.push_back(p);
+		}
+		while (static_cast<int>(m_custom.size()) > target) {
+			m_custom.back().node->removeFromParent();
+			m_custom.pop_back();
+		}
+	}
+
+	void stepCustom(float dt, float wind, int mode, float scale) {
+		for (auto& p : m_custom) {
+			if (mode == 2) {
+				p.x += std::cos(m_t * 0.7f + p.phase) * 18.f * dt;
+				p.y += std::sin(m_t * 0.9f + p.phase * 2.f) * 14.f * dt;
+				if (p.x < 0.f) p.x = m_win.width;
+				if (p.x > m_win.width) p.x = 0.f;
+				if (p.y < 0.f) p.y = m_win.height;
+				if (p.y > m_win.height) p.y = 0.f;
+			} else {
+				p.y += (mode == 1 ? p.vy : -p.vy) * dt;
+				p.x += (p.vx + wind + std::sin(m_t * 1.1f + p.phase) * 14.f) * dt;
+				if (p.y < -24.f) { p.y = m_win.height + 24.f; p.x = frand(0.f, m_win.width); }
+				if (p.y > m_win.height + 24.f) { p.y = -24.f; p.x = frand(0.f, m_win.width); }
+				if (p.x < -24.f) p.x = m_win.width + 24.f;
+				if (p.x > m_win.width + 24.f) p.x = -24.f;
+			}
+			p.rot += p.vr * dt;
+			p.node->setPosition({p.x, p.y});
+			p.node->setRotation(p.rot);
+			p.node->setScale(scale);
+		}
+	}
+
+	// синхронизация цветов частиц с фоном уровня
+	void applySync(float dt, bool tintCustom) {
+		bool on = Mod::get()->getSettingValue<bool>("fx-sync");
+		if (!on) {
+			if (m_syncWas) {
+				m_syncWas = false;
+				for (auto* pool : {&m_snow, &m_rain, &m_fire, &m_petal, &m_star, &m_ember, &m_confetti}) {
+					for (auto& p : *pool) p.node->setColor(p.orig);
+				}
+				for (auto& p : m_custom) p.node->setColor(ccc3(255, 255, 255));
+			}
+			return;
+		}
+		m_syncWas = true;
+		float k = std::min(1.f, dt * 2.5f);
+		m_bgF[0] += (g_bgColor.r - m_bgF[0]) * k;
+		m_bgF[1] += (g_bgColor.g - m_bgF[1]) * k;
+		m_bgF[2] += (g_bgColor.b - m_bgF[2]) * k;
+		m_syncT += dt;
+		if (m_syncT < 0.12f) return;
+		m_syncT = 0.f;
+
+		float h, s, v;
+		rgb2hsv(ccc3(static_cast<GLubyte>(m_bgF[0]), static_cast<GLubyte>(m_bgF[1]), static_cast<GLubyte>(m_bgF[2])), h, s, v);
+		float sv = std::max(s, 0.55f);
+		auto vivid = hsvColor(h, sv, std::max(v, 0.9f));
+		for (auto& p : m_petal) p.node->setColor(vivid);
+		for (auto& p : m_snow) p.node->setColor(hsvColor(h, 0.18f, 1.f));
+		for (auto& p : m_rain) p.node->setColor(hsvColor(h, 0.35f, 1.f));
+		for (auto& p : m_fire) p.node->setColor(hsvColor(h + 0.08f, 0.6f, 1.f));
+		for (auto& p : m_star) p.node->setColor(hsvColor(h, 0.1f, 1.f));
+		for (auto& p : m_ember) p.node->setColor(hsvColor(h + 0.04f, 0.85f, 1.f));
+		for (auto& p : m_confetti) p.node->setColor(hsvColor(h + p.phase / 6.28f * 0.4f, sv, 1.f));
+		if (tintCustom) for (auto& p : m_custom) p.node->setColor(vivid);
 	}
 
 	// type: 0 снег, 1 дождь, 2 светлячки, 3 лепестки, 4 звёзды
@@ -222,6 +372,7 @@ private:
 				w = h = frand(1.5f, 3.f);
 				col = ccc4(255, 255, 255, 200);
 			}
+			p.orig = ccc3(col.r, col.g, col.b);
 			p.phase = frand(0.f, 6.28f);
 			p.x = frand(0.f, m_win.width);
 			p.y = frand(0.f, m_win.height);
