@@ -4,6 +4,7 @@
 #include <cmath>
 #include <string>
 #include <utility>
+#include <unordered_map>
 #include <chrono>
 #include <Geode/ui/Notification.hpp>
 #include <vector>
@@ -165,6 +166,86 @@ static std::string valueText(Row const& r) {
 		}
 		default: return "";
 	}
+}
+
+// ---------------- подсказки к функциям ----------------
+static char const* kDefaultHint = "Hover a row for info  |  Click a header to fold  |  Drag a header to move";
+
+static std::string descFor(Row const& r) {
+	static std::unordered_map<std::string, char const*> d = {
+		{"noclip", "Survive any obstacle. The start anti-cheat spike still kills."},
+		{"hazard-noclip", "Ignore spikes and saws only; blocks still kill."},
+		{"jumphack", "Cube can jump in mid-air."},
+		{"autoclick", "Clicks by itself at the chosen speed."},
+		{"cps", "Autoclicker clicks per second."},
+		{"enabled", "Turn the bot on. The mode decides what it does."},
+		{"mode", "Auto bot plays by itself. Record saves your run, Replay plays it."},
+		{"legit", "Auto bot only: 0 = perfect, 10 = makes human mistakes."},
+		{"bot-cube", "Let the bot play cube sections."},
+		{"bot-wave", "Let the bot play wave sections."},
+		{"speed", "Game speed multiplier inside a level."},
+		{"slowmo-key", "Hold Shift to slow the game down."},
+		{"slowmo", "How slow the Shift slow-motion is."},
+		{"safe-mode", "Blocks level completion if cheats were used."},
+		{"indicator", "Shows active cheats in the corner of the level."},
+		{"restart-key", "Press R to restart the level instantly."},
+		{"show-fps", "Shows FPS in the bottom-left corner."},
+		{"icon-hack", "All icons and colors count as unlocked (local only)."},
+		{"rainbow-icon", "Your icon cycles through all colors."},
+		{"rainbow-speed", "How fast the rainbow icon changes color."},
+		{"player-opacity", "Make your icon see-through (10 = normal)."},
+		{"hide-player", "Hide your icon completely."},
+		{"wave-noclip", "Don't die while playing as the wave."},
+		{"hide-wave", "Hide the wave trail."},
+		{"solid-wave", "Draw the wave trail as a solid line."},
+		{"fx-snow", "Falling snow."},
+		{"fx-rain", "Rain with a slight slant."},
+		{"fx-fireflies", "Glowing fireflies drifting around."},
+		{"fx-petals", "Pink petals falling down."},
+		{"fx-stars", "Twinkling stars."},
+		{"fx-wind", "Pushes snow, rain and petals sideways."},
+		{"fx-embers", "Sparks rising from the bottom."},
+		{"fx-confetti", "Colorful spinning confetti."},
+		{"fx-stretch-x", "Stretch the picture horizontally."},
+		{"fx-stretch-y", "Stretch the picture vertically."},
+		{"fx-zoom", "Zoom the whole level in or out."},
+		{"fx-tilt", "Rotate the picture (degrees)."},
+		{"fx-skew", "Slant the picture sideways."},
+		{"fx-mirror", "Flip the picture left to right."},
+		{"fx-aurora", "Soft colorful northern lights on top."},
+		{"fx-grade", "Color filter: 1 sepia, 2 night, 3 warm, 4 cold, 5 retro."},
+		{"fx-tint", "Slowly changing rainbow color over the screen."},
+		{"fx-vignette", "Darken the screen edges."},
+		{"fx-scanlines", "Old monitor scan lines."},
+		{"fx-letterbox", "Black cinema bars on top and bottom."},
+		{"fx-wobble", "Gentle swaying of the picture."},
+		{"fx-shake", "Camera shake."},
+		{"fx-pulse", "Breathing zoom effect."},
+		{"fx-flip", "Flip the picture upside down."},
+		{"fx-spin", "Constantly rotate the picture."},
+		{"show-clock", "Shows the current time."},
+		{"show-time", "Shows how long this attempt lasts."},
+		{"fx-glow", "Pulsing glowing frame around the screen."},
+		{"fx-grain", "Film grain noise."},
+		{"hitboxes", "Draw hitboxes: red hazards, blue blocks, yellow player."},
+		{"layout-mode", "Hide decoration objects, keep only gameplay."},
+		{"path-trail", "Draws the path you just flew."},
+		{"startpos-switch", "Q / E switch between start positions."},
+		{"frame-step", "F freezes the game, G advances one tick."},
+		{"ui-accent", "Main color of the menu."},
+		{"ui-opacity", "How see-through the panels are."},
+		{"ui-anim", "Speed of menu animations."},
+		{"menu-button", "Round button that opens the menu (for phones)."},
+		{"menu-button-desktop", "Show that round button on PC too."},
+	};
+	std::string k = r.key;
+	if (k.empty()) {
+		if (r.kind == 4) return "Turn off every visual effect.";
+		if (r.kind == 5) return "Turn off every cheat.";
+		return "Put all panels back in their default places.";
+	}
+	auto it = d.find(k);
+	return it != d.end() ? it->second : "";
 }
 
 // ---------------- горячие клавиши ----------------
@@ -352,8 +433,24 @@ public:
 		for (int i = 0; i < static_cast<int>(m_panels.size()); ++i) {
 			this->animatePanel(m_panels[i], i, dt, mouse);
 		}
-		m_hint->setOpacity(static_cast<GLubyte>(150.f * std::clamp(m_time * 3.f, 0.f, 1.f)));
+		float fa = std::clamp(m_time * 3.f, 0.f, 1.f);
+		m_bar->setOpacity(static_cast<GLubyte>(215.f * fa));
+		m_barLine->setOpacity(static_cast<GLubyte>(255.f * fa));
+		m_hint->setOpacity(static_cast<GLubyte>(255.f * fa));
+		m_hint2->setOpacity(static_cast<GLubyte>(255.f * fa));
+		m_title->setOpacity(static_cast<GLubyte>(255.f * fa));
+		m_titleLine->setOpacity(static_cast<GLubyte>(255.f * fa));
 		this->handleBinding(mouse);
+
+		// подсказка под курсором (на телефоне - после нажатия)
+		Row const* hr = this->hoveredRow(mouse);
+		m_pressT = std::max(0.f, m_pressT - dt);
+		if (!hr && m_pressT > 0.f) hr = m_pressRow;
+		if (hr != m_infoRow) {
+			m_infoRow = hr;
+			if (hr) m_hint->setString(fmt::format("{}  -  {}", hr->label, descFor(*hr)).c_str());
+			else m_hint->setString(kDefaultHint);
+		}
 	}
 
 private:
@@ -384,6 +481,9 @@ private:
 		CCLayerColor* shadow = nullptr;
 		CCLayerColor* shimmer = nullptr;
 		CCLabelBMFont* chevron = nullptr;
+		CCLabelBMFont* badge = nullptr;
+		CCLayerColor* border = nullptr;
+		int lastBadge = -1;
 		std::vector<Fade> fades;     // шапка, фон
 		std::vector<Fade> rowFades;  // содержимое строк
 		std::vector<RowUI> rows;
@@ -411,6 +511,14 @@ private:
 	int m_sliderRow = -1;
 	bool m_prevKey[256] = {};
 	CCLabelBMFont* m_hint = nullptr;
+	CCLabelBMFont* m_hint2 = nullptr;
+	CCLabelBMFont* m_title = nullptr;
+	CCLayerColor* m_bar = nullptr;
+	CCLayerColor* m_barLine = nullptr;
+	CCLayerColor* m_titleLine = nullptr;
+	Row const* m_infoRow = nullptr;
+	Row const* m_pressRow = nullptr;
+	float m_pressT = 0.f;
 	std::vector<CCRGBAProtocol*> m_accents;
 	ccColor3B m_acc = ccc3(236, 72, 153);
 	float m_opMul = 1.f;
@@ -424,11 +532,38 @@ private:
 		m_dim = CCLayerColor::create(ccc4(0, 0, 0, 0), win.width, win.height);
 		this->addChild(m_dim);
 
-		m_hint = CCLabelBMFont::create("Hover a switch and press a key to bind it  |  Backspace clears", "chatFont.fnt");
+		// нижняя панель с подсказкой
+		m_bar = CCLayerColor::create(ccc4(8, 9, 13, 215), win.width, 22.f);
+		this->addChild(m_bar, 99);
+		m_barLine = CCLayerColor::create(ccc4(255, 255, 255, 255), win.width, 1.f);
+		m_barLine->setPosition(ccp(0.f, 22.f));
+		this->addChild(m_barLine, 99);
+		m_accents.push_back(m_barLine);
+
+		m_hint = CCLabelBMFont::create(kDefaultHint, "chatFont.fnt");
 		m_hint->setScale(0.5f);
-		m_hint->setPosition(ccp(win.width / 2.f, 10.f));
-		m_hint->setOpacity(0);
+		m_hint->setAnchorPoint(ccp(0.f, 0.5f));
+		m_hint->setPosition(ccp(10.f, 11.f));
+		m_hint->setColor(ccc3(190, 194, 210));
 		this->addChild(m_hint, 100);
+
+		m_hint2 = CCLabelBMFont::create("Hover a switch + press a key = bind  |  Backspace clears", "chatFont.fnt");
+		m_hint2->setScale(0.42f);
+		m_hint2->setAnchorPoint(ccp(1.f, 0.5f));
+		m_hint2->setPosition(ccp(win.width - 10.f, 11.f));
+		m_hint2->setColor(ccc3(130, 134, 152));
+		this->addChild(m_hint2, 100);
+
+		// заголовок
+		m_title = CCLabelBMFont::create("MOD MENU", "bigFont.fnt");
+		m_title->setScale(0.5f);
+		m_title->setAnchorPoint(ccp(0.f, 0.5f));
+		m_title->setPosition(ccp(14.f, win.height - 12.f));
+		this->addChild(m_title, 100);
+		m_titleLine = CCLayerColor::create(ccc4(255, 255, 255, 255), 46.f, 1.5f);
+		m_titleLine->setPosition(ccp(14.f, win.height - 20.f));
+		this->addChild(m_titleLine, 100);
+		m_accents.push_back(m_titleLine);
 
 		auto const& pg = pages();
 		int n = static_cast<int>(pg.size());
@@ -476,7 +611,13 @@ private:
 			pn.node->addChild(pn.shadow);
 			pn.bgFades.push_back({pn.shadow, 70});
 
-			pn.body = CCLayerColor::create(ccc4(19, 20, 27, 238), pn.w, pn.bodyH);
+			pn.border = CCLayerColor::create(ccc4(255, 255, 255, 26), pn.w + 2.f, pn.curH + 2.f);
+			pn.node->addChild(pn.border);
+			pn.bgFades.push_back({pn.border, 26});
+
+			auto grad = CCLayerGradient::create(ccc4(29, 30, 41, 255), ccc4(14, 15, 21, 255), ccp(0, -1));
+			grad->setContentSize(CCSize(pn.w, pn.bodyH));
+			pn.body = grad;
 			pn.node->addChild(pn.body);
 			pn.bgFades.push_back({pn.body, 238});
 
@@ -511,6 +652,13 @@ private:
 			pn.fades.push_back({pn.chevron, 255});
 			m_accents.push_back(pn.chevron);
 
+			pn.badge = CCLabelBMFont::create("", "chatFont.fnt");
+			pn.badge->setScale(0.42f);
+			pn.badge->setPosition(ccp(pn.w - 22.f, -kHeader / 2.f));
+			pn.node->addChild(pn.badge);
+			pn.fades.push_back({pn.badge, 255});
+			m_accents.push_back(pn.badge);
+
 			pn.rowsNode = CCNode::create();
 			pn.node->addChild(pn.rowsNode);
 
@@ -524,6 +672,13 @@ private:
 				ru.hover = CCLayerColor::create(ccc4(255, 255, 255, 0), pn.w, kRow);
 				ru.hover->setPosition(ccp(0.f, rowTopY - kRow));
 				pn.rowsNode->addChild(ru.hover);
+
+				if (i > 0) {
+					auto sep = CCLayerColor::create(ccc4(255, 255, 255, 12), pn.w - 10.f, 1.f);
+					sep->setPosition(ccp(5.f, rowTopY));
+					pn.rowsNode->addChild(sep);
+					pn.rowFades.push_back({sep, 12});
+				}
 
 				auto label = CCLabelBMFont::create(rowLabel(rw).c_str(), "chatFont.fnt");
 				ru.label = label;
@@ -598,6 +753,20 @@ private:
 		return true;
 	}
 
+	Row const* hoveredRow(CCPoint mouse) {
+		for (auto& pn : m_panels) {
+			if (pn.collapse > 0.5f) continue;
+			float lx = mouse.x - pn.x;
+			float top = pn.node->getPositionY();
+			if (lx < 0.f || lx > pn.w) continue;
+			for (size_t i = 0; i < pn.rows.size(); ++i) {
+				float rt = top - kHeader - static_cast<float>(i) * kRow;
+				if (mouse.y <= rt && mouse.y > rt - kRow) return pn.rows[i].row;
+			}
+		}
+		return nullptr;
+	}
+
 	// назначение клавиш: навёл на переключатель и нажал клавишу
 	void handleBinding(CCPoint mouse) {
 		RowUI* hov = nullptr;
@@ -665,6 +834,17 @@ private:
 		pn.body->setPosition(ccp(0.f, -pn.curH));
 		pn.shadow->changeHeight(pn.curH + 3.f);
 		pn.shadow->setPosition(ccp(-1.5f, -pn.curH - 1.5f));
+		pn.border->changeHeight(pn.curH + 2.f);
+		pn.border->setPosition(ccp(-1.f, -pn.curH - 1.f));
+
+		int cnt = 0;
+		for (auto& ru : pn.rows) {
+			if (ru.row->kind == 0 && Mod::get()->getSettingValue<bool>(ru.row->key)) ++cnt;
+		}
+		if (cnt != pn.lastBadge) {
+			pn.lastBadge = cnt;
+			pn.badge->setString(cnt > 0 ? fmt::format("{}", cnt).c_str() : "");
+		}
 		pn.rowsNode->setVisible(pn.collapse < 0.98f);
 
 		float rowA = std::clamp(1.f - pn.collapse * 1.8f, 0.f, 1.f);
@@ -716,6 +896,8 @@ private:
 		auto& ru = pn.rows[ri];
 		auto mod = Mod::get();
 		auto const& r = *ru.row;
+		m_pressRow = ru.row;
+		m_pressT = 2.5f;
 
 		if (r.kind >= 4 && r.kind != 7) {
 			if (r.kind == 4) resetFx();
