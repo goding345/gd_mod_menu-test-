@@ -6,7 +6,7 @@
 	},
 	"id": "user.autojump",
 	"name": "Mod Menu",
-	"version": "v2.9.0",
+	"version": "v3.0.0",
 	"developer": "user",
 	"description": "Menu on Tab: cheats, auto bot, macros, icon hack, rainbow icon, FPS/clock, visual effects.",
 	"settings": {
@@ -418,6 +418,30 @@
 			"default": 0,
 			"min": 0,
 			"max": 10
+		},
+		"lyrics": {
+			"type": "bool",
+			"name": "Song lyrics subtitles",
+			"default": true
+		},
+		"lyrics-auto": {
+			"type": "bool",
+			"name": "Download lyrics automatically (LRCLIB)",
+			"default": true
+		},
+		"lyrics-offset": {
+			"type": "int",
+			"name": "Lyrics offset (x100 ms)",
+			"default": 0,
+			"min": -20,
+			"max": 20
+		},
+		"lyrics-size": {
+			"type": "int",
+			"name": "Lyrics size",
+			"default": 8,
+			"min": 5,
+			"max": 15
 		}
 	}
 }
