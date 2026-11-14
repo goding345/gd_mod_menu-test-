@@ -43,13 +43,9 @@ static std::vector<Page> const& pages() {
 			{0, "Jump hack", "jumphack", 0, 0, 0},
 			{0, "Autoclick", "autoclick", 0, 0, 0},
 			{1, "Auto CPS", "cps", 1, 30, 1},
-		}},
-		{"Bot", {
 			{0, "Bot on", "enabled", 0, 0, 0},
-			{3, "Mode", "mode", 0, 0, 0},
+			{3, "Bot mode", "mode", 0, 0, 0},
 			{1, "Mistakes", "legit", 0, 10, 1},
-			{0, "Bot: cube", "bot-cube", 0, 0, 0},
-			{0, "Bot: wave", "bot-wave", 0, 0, 0},
 		}},
 		{"Global", {
 			{2, "Speed", "speed", 0.1, 5.0, 0.1},
@@ -108,7 +104,6 @@ static std::vector<Page> const& pages() {
 			{0, "Lyrics", "lyrics", 0, 0, 0},
 			{0, "Lyr. auto", "lyrics-auto", 0, 0, 0},
 			{1, "Lyr. offset", "lyrics-offset", -20, 20, 1},
-			{1, "Lyr. size", "lyrics-size", 5, 15, 1},
 		}},
 		{"Extra", {
 			{0, "Flip screen", "fx-flip", 0, 0, 0},
@@ -128,6 +123,13 @@ static std::vector<Page> const& pages() {
 			{0, "Button on PC", "menu-button-desktop", 0, 0, 0},
 			{6, "Reset layout", "", 0, 0, 0},
 		}},
+		{"Custom", {
+			{0, "Sync to BG", "fx-sync", 0, 0, 0},
+			{1, "Own image", "fx-custom", 0, 10, 1},
+			{1, "Img size", "fx-custom-size", 1, 20, 1},
+			{1, "Img mode", "fx-custom-mode", 0, 2, 1},
+			{0, "Img tint", "fx-custom-tint", 0, 0, 0},
+		}},
 	};
 	return p;
 }
@@ -138,7 +140,7 @@ static void resetFx() {
 	for (char const* k : {"fx-snow", "fx-rain", "fx-fireflies", "fx-petals", "fx-stars", "fx-wind",
 		"fx-tilt", "fx-skew", "fx-tint", "fx-vignette", "fx-scanlines", "fx-letterbox",
 		"fx-wobble", "fx-shake", "fx-pulse", "fx-spin",
-		"fx-embers", "fx-confetti", "fx-aurora", "fx-grade", "fx-glow", "fx-grain"}) {
+		"fx-embers", "fx-confetti", "fx-custom", "fx-aurora", "fx-grade", "fx-glow", "fx-grain"}) {
 		m->setSettingValue<int64_t>(k, 0);
 	}
 	for (char const* k : {"fx-stretch-x", "fx-stretch-y", "fx-zoom"}) {
@@ -231,6 +233,11 @@ static std::string descFor(Row const& r) {
 		{"show-time", "Shows how long this attempt lasts."},
 		{"fx-glow", "Pulsing glowing frame around the screen."},
 		{"fx-grain", "Film grain noise."},
+		{"fx-sync", "Particle colors follow the level background color."},
+		{"fx-custom", "Falling copies of YOUR image (custom/particle.png in the mod folder)."},
+		{"fx-custom-size", "Size of your custom particles."},
+		{"fx-custom-mode", "0 = fall, 1 = rise, 2 = drift around."},
+		{"fx-custom-tint", "Tint your image with the background color."},
 		{"hitboxes", "Draw hitboxes: red hazards, blue blocks, yellow player."},
 		{"layout-mode", "Hide decoration objects, keep only gameplay."},
 		{"path-trail", "Draws the path you just flew."},
@@ -606,9 +613,9 @@ private:
 			float defTop = rowTop[r];
 			pn.defX = defX;
 			pn.defTop = defTop;
-			pn.x = std::clamp(static_cast<float>(mod->getSavedValue<double>(fmt::format("pnl3-x-{}", p), defX)), 0.f, win.width - pn.w);
-			pn.topY = std::clamp(static_cast<float>(mod->getSavedValue<double>(fmt::format("pnl3-y-{}", p), defTop)), pn.curH, win.height);
-			pn.collapseT = mod->getSavedValue<bool>(fmt::format("pnl3-c-{}", p), false) ? 1.f : 0.f;
+			pn.x = std::clamp(static_cast<float>(mod->getSavedValue<double>(fmt::format("pnl4-x-{}", p), defX)), 0.f, win.width - pn.w);
+			pn.topY = std::clamp(static_cast<float>(mod->getSavedValue<double>(fmt::format("pnl4-y-{}", p), defTop)), pn.curH, win.height);
+			pn.collapseT = mod->getSavedValue<bool>(fmt::format("pnl4-c-{}", p), false) ? 1.f : 0.f;
 			pn.collapse = pn.collapseT;
 
 			pn.node = CCNode::create();
@@ -815,9 +822,9 @@ private:
 			pn.topY = pn.defTop;
 			pn.collapseT = 0.f;
 			pn.chevron->setString("-");
-			mod->setSavedValue<double>(fmt::format("pnl3-x-{}", i), pn.x);
-			mod->setSavedValue<double>(fmt::format("pnl3-y-{}", i), pn.topY);
-			mod->setSavedValue<bool>(fmt::format("pnl3-c-{}", i), false);
+			mod->setSavedValue<double>(fmt::format("pnl4-x-{}", i), pn.x);
+			mod->setSavedValue<double>(fmt::format("pnl4-y-{}", i), pn.topY);
+			mod->setSavedValue<bool>(fmt::format("pnl4-c-{}", i), false);
 		}
 	}
 
@@ -972,10 +979,10 @@ private:
 			if (!m_dragMoved) {
 				pn.collapseT = pn.collapseT > 0.5f ? 0.f : 1.f;
 				pn.chevron->setString(pn.collapseT > 0.5f ? "+" : "-");
-				mod->setSavedValue<bool>(fmt::format("pnl3-c-{}", m_drag), pn.collapseT > 0.5f);
+				mod->setSavedValue<bool>(fmt::format("pnl4-c-{}", m_drag), pn.collapseT > 0.5f);
 			} else {
-				mod->setSavedValue<double>(fmt::format("pnl3-x-{}", m_drag), pn.x);
-				mod->setSavedValue<double>(fmt::format("pnl3-y-{}", m_drag), pn.topY);
+				mod->setSavedValue<double>(fmt::format("pnl4-x-{}", m_drag), pn.x);
+				mod->setSavedValue<double>(fmt::format("pnl4-y-{}", m_drag), pn.topY);
 			}
 		}
 		m_drag = -1;
