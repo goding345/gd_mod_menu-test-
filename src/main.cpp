@@ -668,6 +668,14 @@ class $modify(BotLayer, GJBaseGameLayer) {
 
 
 CCNode* createFxLayer(); // visuals.cpp
+CCNode* createMenuFab(); // button.cpp
+CCNode* createLyricsLayer(std::string key, std::string title, std::string artist); // lyrics.cpp
+
+#ifdef GEODE_IS_MOBILE
+static constexpr bool kIsMobile = true;
+#else
+static constexpr bool kIsMobile = false;
+#endif
 bool restartKeyDown(); // keys.cpp
 bool letterKeyDown(char c); // keys.cpp
 bool frameFrozen(); // menu.cpp
@@ -723,6 +731,8 @@ class $modify(BotPlayLayer, PlayLayer) {
 		std::vector<StartPosObject*> startPos;
 		int startIdx = -1;
 		bool prevQ = false, prevE = false;
+		CCNode* fab = nullptr;
+		CCNode* lyrics = nullptr;
 	};
 
 	// слои для хитбоксов/пути и списки объектов (создаём лениво, чтобы не зависеть от порядка загрузки)
@@ -880,6 +890,40 @@ class $modify(BotPlayLayer, PlayLayer) {
 			if (info != m_fields->lastInfo) {
 				m_fields->lastInfo = info;
 				m_fields->infoLabel->setString(info.c_str());
+			}
+		}
+
+		// круглая кнопка меню (телефон/планшет; на ПК - по настройке)
+		{
+			bool wantFab = mod->getSettingValue<bool>("menu-button") &&
+				(kIsMobile || mod->getSettingValue<bool>("menu-button-desktop"));
+			if (wantFab && !m_fields->fab) {
+				if (auto host = this->getParent()) {
+					m_fields->fab = createMenuFab();
+					if (m_fields->fab) host->addChild(m_fields->fab, 300);
+				}
+			}
+			if (m_fields->fab) m_fields->fab->setVisible(wantFab);
+		}
+
+		// субтитры под песню (кэш .lrc или загрузка с LRCLIB по названию)
+		if (!m_fields->lyrics && m_level) {
+			if (auto host = this->getParent()) {
+				int sid = static_cast<int>(m_level->m_songID);
+				std::string key, title, artist;
+				if (sid > 0) {
+					key = fmt::format("{}", sid);
+					if (auto info = MusicDownloadManager::sharedState()->getSongInfoObject(sid)) {
+						title = std::string(info->m_songName);
+						artist = std::string(info->m_artistName);
+					}
+				} else {
+					int tr = static_cast<int>(m_level->m_audioTrack);
+					key = fmt::format("official-{}", tr);
+					title = std::string(LevelTools::getAudioTitle(tr));
+				}
+				m_fields->lyrics = createLyricsLayer(key, title, artist);
+				if (m_fields->lyrics) host->addChild(m_fields->lyrics, 250);
 			}
 		}
 
