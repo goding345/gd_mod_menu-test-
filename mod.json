@@ -6,7 +6,7 @@
 	},
 	"id": "user.autojump",
 	"name": "Mod Menu",
-	"version": "v3.0.0",
+	"version": "v3.1.0",
 	"developer": "user",
 	"description": "Menu on Tab: cheats, auto bot, macros, icon hack, rainbow icon, FPS/clock, visual effects.",
 	"settings": {
@@ -442,6 +442,37 @@
 			"default": 8,
 			"min": 5,
 			"max": 15
+		},
+		"fx-sync": {
+			"type": "bool",
+			"name": "Sync particle colors to level background",
+			"default": false
+		},
+		"fx-custom": {
+			"type": "int",
+			"name": "Own image particles",
+			"default": 0,
+			"min": 0,
+			"max": 10
+		},
+		"fx-custom-size": {
+			"type": "int",
+			"name": "Own image size",
+			"default": 5,
+			"min": 1,
+			"max": 20
+		},
+		"fx-custom-mode": {
+			"type": "int",
+			"name": "Own image mode (0 fall, 1 rise, 2 drift)",
+			"default": 0,
+			"min": 0,
+			"max": 2
+		},
+		"fx-custom-tint": {
+			"type": "bool",
+			"name": "Tint own image with background color",
+			"default": false
 		}
 	}
 }
