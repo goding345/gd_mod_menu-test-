@@ -669,6 +669,7 @@ class $modify(BotLayer, GJBaseGameLayer) {
 
 CCNode* createFxLayer(); // visuals.cpp
 CCNode* createMenuFab(); // button.cpp
+void setFxBackgroundColor(ccColor3B c); // visuals.cpp
 CCNode* createLyricsLayer(std::string key, std::string title, std::string artist); // lyrics.cpp
 
 #ifdef GEODE_IS_MOBILE
@@ -926,6 +927,9 @@ class $modify(BotPlayLayer, PlayLayer) {
 				if (m_fields->lyrics) host->addChild(m_fields->lyrics, 250);
 			}
 		}
+
+		// цвет фона уровня для синхронизации визуалов
+		if (m_background) setFxBackgroundColor(m_background->getColor());
 
 		// ----- инструменты практики -----
 		if (!m_fields->hbNode || m_fields->hbObjs.empty()) this->ensureTools();
