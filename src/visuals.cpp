@@ -3,6 +3,7 @@
 #include <cmath>
 #include <filesystem>
 #include <random>
+#include "effects.hpp"
 #include <vector>
 
 using namespace geode::prelude;
@@ -49,6 +50,17 @@ static ccColor3B hueColor(float h) {
 	return ccc3(static_cast<GLubyte>(r * 255.f), static_cast<GLubyte>(g * 255.f), static_cast<GLubyte>(b * 255.f));
 }
 
+struct FxAny {
+	CCNode* node = nullptr;
+	CCRGBAProtocol* rgba = nullptr;
+	float x = 0.f, y = 0.f, vx = 0.f, vy = 0.f, phase = 0.f, rot = 0.f, vr = 0.f;
+	float life = 0.f, maxLife = 0.f;
+	int eff = 0;
+};
+
+class FxLayer;
+static FxLayer* g_fx = nullptr;
+
 static ccColor3B hsvColor(float h, float s, float v) {
 	h = h - std::floor(h);
 	auto base = hueColor(h);
@@ -63,6 +75,7 @@ public:
 		if (ret->init()) {
 			ret->autorelease();
 			ret->setup();
+			g_fx = ret;
 			return ret;
 		}
 		delete ret;
@@ -70,6 +83,7 @@ public:
 	}
 
 	~FxLayer() override {
+		if (g_fx == this) g_fx = nullptr;
 		if (m_customTex) m_customTex->release();
 	}
 
@@ -102,6 +116,7 @@ public:
 		bool tintCustom = mod->getSettingValue<bool>("fx-custom-tint");
 		this->stepCustom(dt, wind, gi("fx-custom-mode"), gi("fx-custom-size") * 0.1f);
 		this->applySync(dt, tintCustom);
+		this->stepEffects(dt, wind);
 		this->stepStars();
 
 		this->updateTint(gi("fx-tint"));
@@ -113,6 +128,33 @@ public:
 		this->updateGlow(gi("fx-glow"));
 		this->updateGrain(gi("fx-grain"), dt);
 		this->updateScene();
+	}
+
+	// всплеск частиц своего визуала в точке (для режима "играть")
+	void burst(float x, float y, int effIdx) {
+		auto& fx = customEffects();
+		if (effIdx < 0 || effIdx >= static_cast<int>(fx.size())) return;
+		auto const& e = fx[effIdx];
+		for (int k = 0; k < 24; ++k) {
+			FxAny p;
+			p.eff = effIdx;
+			float rot0 = 0.f;
+			p.node = this->makeEffNode(e, p.rgba, rot0);
+			p.rot = rot0;
+			p.phase = frand(0.f, 6.28f);
+			float ang = frand(0.f, 6.28f);
+			float sp = frand(40.f, 140.f);
+			p.vx = std::cos(ang) * sp;
+			p.vy = std::sin(ang) * sp + 30.f;
+			p.vr = frand(-1.f, 1.f) * (e.spin * 25.f + 30.f);
+			p.x = x;
+			p.y = y;
+			p.life = p.maxLife = frand(0.9f, 1.5f);
+			p.rgba->setColor(this->effColor(e, p));
+			p.node->setPosition({x, y});
+			this->addChild(p.node, 3);
+			m_burst.push_back(p);
+		}
 	}
 
 private:
@@ -133,6 +175,9 @@ private:
 	int m_lastGrade = -1;
 	std::mt19937 m_rng{std::random_device{}()};
 	std::vector<FxSprite> m_custom;
+	std::vector<FxAny> m_eff;
+	std::vector<FxAny> m_burst;
+	int m_effVersion = -1;
 	CCTexture2D* m_customTex = nullptr;
 	bool m_syncWas = false;
 	float m_syncT = 0.f;
@@ -224,6 +269,7 @@ private:
 			m_grain.push_back(q);
 		}
 
+		loadEffects();
 		this->loadCustom();
 		this->scheduleUpdate();
 	}
@@ -439,6 +485,117 @@ private:
 		}
 	}
 
+	// ----- свои визуалы (кнопка "+" в меню) -----
+	ccColor3B currentVivid() {
+		float h, s, v;
+		rgb2hsv(g_bgColor, h, s, v);
+		return hsvColor(h, std::max(s, 0.55f), std::max(v, 0.9f));
+	}
+
+	ccColor3B effColor(CustomEffect const& e, FxAny const& p) {
+		if (e.shape == 3 && e.color < 100) return ccc3(255, 255, 255);
+		if (e.color == 100) return hueColor(std::fmod(p.phase / 6.28f + m_t * 0.1f, 1.f));
+		if (e.color == 101) return this->currentVivid();
+		return hsvColor(static_cast<float>(e.color) / 100.f, 0.85f, 1.f);
+	}
+
+	CCNode* makeEffNode(CustomEffect const& e, CCRGBAProtocol*& rgba, float& rot0) {
+		rot0 = 0.f;
+		if (e.shape == 3 && m_customTex) {
+			auto spr = CCSprite::createWithTexture(m_customTex);
+			spr->setScale(static_cast<float>(e.size) * 0.1f);
+			rgba = spr;
+			return spr;
+		}
+		float w = 1.5f + e.size * 0.5f, h = w;
+		if (e.shape == 2) {
+			w = 1.2f;
+			h = 4.f + e.size * 0.8f;
+		}
+		if (e.shape == 1) rot0 = 45.f;
+		auto l = CCLayerColor::create(ccc4(255, 255, 255, 230), w, h);
+		rgba = l;
+		return l;
+	}
+
+	void rebuildEffects() {
+		for (auto& p : m_eff) p.node->removeFromParent();
+		m_eff.clear();
+		auto& fx = customEffects();
+		for (int i = 0; i < static_cast<int>(fx.size()); ++i) {
+			auto const& e = fx[i];
+			if (!e.on) continue;
+			int n = std::clamp(e.count, 1, 10) * 8;
+			for (int k = 0; k < n; ++k) {
+				FxAny p;
+				p.eff = i;
+				float rot0 = 0.f;
+				p.node = this->makeEffNode(e, p.rgba, rot0);
+				p.rot = rot0;
+				p.phase = frand(0.f, 6.28f);
+				p.x = frand(0.f, m_win.width);
+				p.y = frand(0.f, m_win.height);
+				p.vy = (12.f + e.speed * 7.f) * frand(0.6f, 1.2f);
+				p.vx = frand(-8.f, 8.f);
+				p.vr = frand(-1.f, 1.f) * e.spin * 25.f;
+				p.rgba->setColor(this->effColor(e, p));
+				p.node->setPosition({p.x, p.y});
+				p.node->setRotation(p.rot);
+				this->addChild(p.node, 2);
+				m_eff.push_back(p);
+			}
+		}
+	}
+
+	void stepEffects(float dt, float wind) {
+		auto& fx = customEffects();
+		if (m_effVersion != customEffectsVersion()) {
+			m_effVersion = customEffectsVersion();
+			this->rebuildEffects();
+		}
+		for (auto& p : m_eff) {
+			if (p.eff >= static_cast<int>(fx.size())) continue;
+			auto const& e = fx[p.eff];
+			float sway = e.sway * 4.f;
+			if (e.mode == 2) {
+				p.x += std::cos(m_t * 0.7f + p.phase) * 18.f * dt;
+				p.y += std::sin(m_t * 0.9f + p.phase * 2.f) * 14.f * dt;
+				if (p.x < 0.f) p.x = m_win.width;
+				if (p.x > m_win.width) p.x = 0.f;
+				if (p.y < 0.f) p.y = m_win.height;
+				if (p.y > m_win.height) p.y = 0.f;
+			} else {
+				p.y += (e.mode == 1 ? p.vy : -p.vy) * dt;
+				p.x += (p.vx + wind + std::sin(m_t * 1.1f + p.phase) * sway) * dt;
+				if (p.y < -24.f) { p.y = m_win.height + 24.f; p.x = frand(0.f, m_win.width); }
+				if (p.y > m_win.height + 24.f) { p.y = -24.f; p.x = frand(0.f, m_win.width); }
+				if (p.x < -24.f) p.x = m_win.width + 24.f;
+				if (p.x > m_win.width + 24.f) p.x = -24.f;
+			}
+			p.rot += p.vr * dt;
+			p.node->setPosition({p.x, p.y});
+			p.node->setRotation(p.rot);
+			if (e.color >= 100) p.rgba->setColor(this->effColor(e, p));
+		}
+		for (size_t i = 0; i < m_burst.size();) {
+			auto& b = m_burst[i];
+			b.life -= dt;
+			if (b.life <= 0.f) {
+				b.node->removeFromParent();
+				m_burst.erase(m_burst.begin() + i);
+				continue;
+			}
+			b.vy -= 90.f * dt;
+			b.x += b.vx * dt;
+			b.y += b.vy * dt;
+			b.rot += b.vr * dt;
+			b.node->setPosition({b.x, b.y});
+			b.node->setRotation(b.rot);
+			b.rgba->setOpacity(static_cast<GLubyte>(255.f * b.life / b.maxLife));
+			++i;
+		}
+	}
+
 	void updateTint(int level) {
 		if (level <= 0) {
 			m_tint->setVisible(false);
@@ -623,4 +780,12 @@ private:
 
 CCNode* createFxLayer() {
 	return FxLayer::create();
+}
+
+void fxBurst(float x, float y, int idx) {
+	if (g_fx) g_fx->burst(x, y, idx);
+}
+
+bool fxAvailable() {
+	return g_fx != nullptr;
 }
