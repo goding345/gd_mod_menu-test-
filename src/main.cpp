@@ -669,6 +669,7 @@ class $modify(BotLayer, GJBaseGameLayer) {
 
 CCNode* createFxLayer(); // visuals.cpp
 CCNode* createMenuFab(); // button.cpp
+CCNode* createHomeBar(); // homebar.cpp
 void setFxBackgroundColor(ccColor3B c); // visuals.cpp
 CCNode* createLyricsLayer(std::string key, std::string title, std::string artist); // lyrics.cpp
 
@@ -733,6 +734,7 @@ class $modify(BotPlayLayer, PlayLayer) {
 		int startIdx = -1;
 		bool prevQ = false, prevE = false;
 		CCNode* fab = nullptr;
+		CCNode* bar = nullptr;
 		CCNode* lyrics = nullptr;
 	};
 
@@ -905,6 +907,17 @@ class $modify(BotPlayLayer, PlayLayer) {
 				}
 			}
 			if (m_fields->fab) m_fields->fab->setVisible(wantFab);
+
+			// полоска внизу, как на iPhone
+			bool wantBar = mod->getSettingValue<bool>("home-bar") &&
+				(kIsMobile || mod->getSettingValue<bool>("menu-button-desktop"));
+			if (wantBar && !m_fields->bar) {
+				if (auto host = this->getParent()) {
+					m_fields->bar = createHomeBar();
+					if (m_fields->bar) host->addChild(m_fields->bar, 300);
+				}
+			}
+			if (m_fields->bar) m_fields->bar->setVisible(wantBar);
 		}
 
 		// субтитры под песню (кэш .lrc или загрузка с LRCLIB по названию)
