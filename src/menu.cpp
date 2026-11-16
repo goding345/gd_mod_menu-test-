@@ -6,6 +6,7 @@
 #include <utility>
 #include <unordered_map>
 #include <chrono>
+#include "effects.hpp"
 #include <Geode/ui/Notification.hpp>
 #include <vector>
 
@@ -15,6 +16,8 @@ bool tabKeyDown(); // keys.cpp
 bool shiftKeyDown(); // keys.cpp
 bool letterKeyDown(char c); // keys.cpp
 bool vkDown(int vk); // keys.cpp
+void openVisualManager(); // visualui.cpp
+void openVisualEditor(int idx); // visualui.cpp
 
 static bool g_frozen = false;
 static bool g_stepReq = false;
@@ -121,6 +124,7 @@ static std::vector<Page> const& pages() {
 			{1, "Anim speed", "ui-anim", 1, 10, 1},
 			{0, "Round button", "menu-button", 0, 0, 0},
 			{0, "Button on PC", "menu-button-desktop", 0, 0, 0},
+			{0, "Home bar", "home-bar", 0, 0, 0},
 			{6, "Reset layout", "", 0, 0, 0},
 		}},
 		{"Custom", {
@@ -129,6 +133,8 @@ static std::vector<Page> const& pages() {
 			{1, "Img size", "fx-custom-size", 1, 20, 1},
 			{1, "Img mode", "fx-custom-mode", 0, 2, 1},
 			{0, "Img tint", "fx-custom-tint", 0, 0, 0},
+			{9, "+ New visual", "", 0, 0, 0},
+			{8, "My visuals", "", 0, 0, 0},
 		}},
 	};
 	return p;
@@ -250,11 +256,14 @@ static std::string descFor(Row const& r) {
 		{"ui-accent", "Main color of the menu."},
 		{"ui-opacity", "How see-through the panels are."},
 		{"ui-anim", "Speed of menu animations."},
+		{"home-bar", "Thin bar at the bottom (like iPhone): tap or swipe up to open the menu."},
 		{"menu-button", "Round button that opens the menu (for phones)."},
 		{"menu-button-desktop", "Show that round button on PC too."},
 	};
 	std::string k = r.key;
 	if (k.empty()) {
+		if (r.kind == 9) return "Create your own visual: name it, tune the particles, then play with them.";
+		if (r.kind == 8) return "Your own visuals: turn on/off, edit or delete.";
 		if (r.kind == 4) return "Turn off every visual effect.";
 		if (r.kind == 5) return "Turn off every cheat.";
 		return "Put all panels back in their default places.";
@@ -368,6 +377,7 @@ public:
 	}
 
 	bool ccTouchBegan(CCTouch* touch, CCEvent*) override {
+		if (modalOpen()) return false; // окно редактора визуалов само ловит касания
 		CCPoint p = this->convertTouchToNodeSpace(touch);
 		for (int i = static_cast<int>(m_panels.size()) - 1; i >= 0; --i) {
 			auto& pn = m_panels[i];
@@ -914,6 +924,14 @@ private:
 		m_pressRow = ru.row;
 		m_pressT = 2.5f;
 
+		if (r.kind == 8) {
+			openVisualManager();
+			return;
+		}
+		if (r.kind == 9) {
+			openVisualEditor(-1);
+			return;
+		}
 		if (r.kind >= 4 && r.kind != 7) {
 			if (r.kind == 4) resetFx();
 			else if (r.kind == 5) resetCheats();
@@ -998,6 +1016,10 @@ void toggleHackMenu() {
 	} else if (auto scene = CCDirector::get()->getRunningScene()) {
 		if (auto menu = HackOverlay::create()) scene->addChild(menu, 99999);
 	}
+}
+
+bool hackMenuOpen() {
+	return HackOverlay::s_open != nullptr;
 }
 
 ccColor3B menuAccent() {
